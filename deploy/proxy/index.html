@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OnlineJourno Tools</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 4rem auto; padding: 0 1.5rem; color: #111; }
+    h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+    p.lead { color: #555; margin-top: 0; font-size: 1.1rem; }
+    .tools { display: grid; gap: 1.5rem; margin-top: 2.5rem; }
+    .tool { border: 1px solid #e5e5e5; border-radius: 8px; padding: 1.5rem; text-decoration: none; color: inherit; display: block; transition: border-color 0.15s; }
+    .tool:hover { border-color: #0066cc; }
+    .tool h2 { margin: 0 0 0.5rem; font-size: 1.2rem; color: #0066cc; }
+    .tool p { margin: 0; color: #555; font-size: 0.95rem; line-height: 1.5; }
+    .tag { display: inline-block; font-size: 0.75rem; background: #f0f0f0; border-radius: 4px; padding: 2px 8px; margin-top: 0.75rem; color: #666; }
+    footer { margin-top: 4rem; color: #999; font-size: 0.85rem; }
+    footer a { color: #999; }
+  </style>
+</head>
+<body>
+  <h1>OnlineJourno Tools</h1>
+  <p class="lead">Free tools for journalists, editors, and digital newsrooms.</p>
+
+  <div class="tools">
+
+    <a class="tool" href="/crawl-budget-analyser/">
+      <h2>🤖 Bot Crawl Analyser</h2>
+      <p>See how Google, Bing, and AI crawlers (ChatGPT, Perplexity) actually see your news site.
+         Find out which sections are invisible to bots, where crawl budget is wasted on archive content,
+         and how your site structure compares to competitors — all from public data, no server access needed.</p>
+      <span class="tag">SEO</span>
+      <span class="tag">AI visibility</span>
+      <span class="tag">Site structure</span>
+    </a>
+
+    <a class="tool" href="/web-bloat-checker/">
+      <h2>📦 Web Bloat Checker</h2>
+      <p>Analyse the page weight, third-party scripts, and tracker load of any news article.
+         See what your readers are actually downloading — and what's slowing your pages down.</p>
+      <span class="tag">Performance</span>
+      <span class="tag">Privacy</span>
+      <span class="tag">Page weight</span>
+    </a>
+
+    <!-- Add new tools here. Copy one <a class="tool"> block above. -->
+
+  </div>
+
+  <footer>
+    <p>Built by <a href="https://onlinejourno.com">OnlineJourno</a> ·
+       <a href="https://github.com/onlinejourno">Open source on GitHub</a></p>
+  </footer>
+</body>
+</html>

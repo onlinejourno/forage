@@ -1,0 +1,30 @@
+app = "crawl-budget-analyser"
+primary_region = "sin"  # Singapore — closest to India
+
+[build]
+
+[env]
+  AUDIT_LOG_PATH = "/data/audit_log.db"
+
+# Persistent volume for the SQLite audit log
+# Create it once with: fly volumes create crawl_data --size 1
+[mounts]
+  source = "crawl_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

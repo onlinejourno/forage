@@ -1,0 +1,28 @@
+# Editorial priority config — rank sections by how important they are to
+# your content strategy. Rank 1 = highest priority. Gaps between ranks
+# are fine (e.g. jump from 5 to 99 for archive to signal explicit depriority).
+#
+# The tool will diff these declared priorities against actual bot crawl
+# attention and flag sections that are over- or under-crawled relative
+# to their editorial importance.
+
+sections:
+  news:           1
+  opinion:        2
+  features:       3
+  business:       4
+  sport:          5
+  entertainment:  6
+  sci-tech:       7
+  life-and-style: 8
+  archive:        99   # explicitly low — expected to be deprioritised
+
+# Which bots to include in the mismatch report.
+# Remove any you don't care about, add others that appear in your logs.
+bots:
+  - googlebot
+  - bingbot
+  - gptbot
+  - perplexitybot
+  - claudebot
+  - applebot

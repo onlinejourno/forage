@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+output/
+*.parquet
+*.errors.txt
+webapp/audit_log.db
