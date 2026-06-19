@@ -127,6 +127,8 @@ competitor_urls = [
 # Run analysis
 # ---------------------------------------------------------------------------
 
+times_audited = audit_log.site_audit_count(site_url)
+
 col_title, col_meta = st.columns([3, 1])
 with col_title:
     st.title(f"Bot Crawl Report — {site_url}")
