@@ -150,6 +150,6 @@ Issues and PRs welcome. Particularly interested in:
 
 ## Licence
 
-MIT. Use freely, attribution appreciated.
+Functional Source License 1.1 (FSL-1.1-ALv2) — source-available, converts to Apache 2.0 after two years. See `LICENSE.md`.
 
 Built by [OnlineJourno](https://onlinejourno.com).
