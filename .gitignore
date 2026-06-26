@@ -4,3 +4,9 @@ output/
 *.parquet
 *.errors.txt
 webapp/audit_log.db
+
+# secrets / local env + OS junk (pre-public hardening)
+.env
+.env.*
+!.env.example
+.DS_Store
