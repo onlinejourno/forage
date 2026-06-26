@@ -150,6 +150,14 @@ Issues and PRs welcome. Particularly interested in:
 
 ## Licence
 
-Functional Source License 1.1 (FSL-1.1-ALv2) — source-available, converts to Apache 2.0 after two years. See `LICENSE.md`.
+**MIT** — fully open source, use it freely. See [LICENSE.md](LICENSE.md).
+
+## Open source — newsroom tech, by a journalist
+
+This is one of [OnlineJourno](https://onlinejourno.com)'s **fully open-source** tools (MIT). OnlineJourno's *products* are fair-source; this one is a deliberate gift to the commons — no strings.
+
+**Why a journalist built this:** most newsroom technology is built by engineers *at* news organisations, *for* news organisations. This isn't that. I'm a journalist — 25+ years in digital newsrooms — and I built this because the problem it solves is an *editorial* problem wearing a technical costume: a section that's editorially vital but structurally invisible to crawlers (Opinion, Features) quietly vanishing from search and AI answers, with no one in the newsroom able to see it happen. It's open because the answer shouldn't be locked inside one newsroom.
+
+**If you write code and care about how journalism survives the next decade, this is an on-ramp.** Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md); start with an issue labelled `good first issue`.
 
 Built by [OnlineJourno](https://onlinejourno.com).
