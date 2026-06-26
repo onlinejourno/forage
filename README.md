@@ -22,7 +22,7 @@ This tool surfaces that gap and tells you — in plain English — what to ask t
 
 Enter any news site URL. Get a report in ~60 seconds. Works on your own site and competitors.
 
-→ **[Try it on Streamlit Community Cloud](https://share.streamlit.io)** *(link once deployed)*
+→ **[Try it live at tools.onlinejourno.com](https://tools.onlinejourno.com/crawl-budget-analyser)**
 
 What it analyses from public data:
 - Sitemap structure — how many URLs per section, how deep they are, whether lastmod dates are accurate
@@ -86,16 +86,18 @@ Built as an open-source tool to give journalists a seat at the table in conversa
 
 ---
 
-## Running the web dashboard locally
+## Running the API locally
+
+The dashboard at [tools.onlinejourno.com](https://tools.onlinejourno.com/crawl-budget-analyser) is a thin front-end over this FastAPI JSON API. To self-host the API:
 
 ```bash
 git clone https://github.com/onlinejourno/news-crawl-budget-analyzer
-cd news-crawl-budget-analyzer/crawl-budget-analyzer
-pip install -r webapp/requirements.txt
-streamlit run webapp/app.py
+cd news-crawl-budget-analyzer
+pip install -r webapp/requirements-api.txt
+uvicorn webapp.api:app --reload
 ```
 
-Opens at `http://localhost:8501`.
+`POST /api/analyse {"url": "..."}` returns a job id; poll `GET /api/analyse/{id}`. Deploy to Fly with a plain `fly deploy` (ships the FastAPI image).
 
 ---
 
@@ -114,9 +116,11 @@ crawl-budget-analyzer/
 │   ├── gsc_client.py           # Google Search Console API wrapper
 │   └── cli.py                  # Command-line interface
 │
-├── webapp/                     # Streamlit dashboard (public-data)
-│   ├── app.py                  # Main dashboard (5 tabs)
+├── webapp/                     # FastAPI JSON API (public-data analysis)
+│   ├── api.py                  # JSON API over the analysis (background jobs)
 │   ├── fetchers.py             # Sitemap, robots.txt, spider, Common Crawl
+│   ├── ssrf.py                 # SSRF guard — validates every outbound fetch
+│   ├── sitemap_parse.py        # SSRF/XXE-safe sitemap parser
 │   └── audit_log.py            # SQLite log of recent audits
 │
 ├── example_priority.yaml       # Sample editorial priority config

@@ -1,0 +1,8 @@
+# flyctl launch added from .gitignore
+**/__pycache__
+**/*.pyc
+**/output
+**/*.parquet
+**/*.errors.txt
+**/webapp/audit_log.db
+fly.toml
