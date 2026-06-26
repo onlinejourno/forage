@@ -2,13 +2,17 @@
 gaps between what's submitted vs. what's actually in the crawl logs.
 """
 
-import advertools as adv
 import pandas as pd
+
+from webapp.sitemap_parse import safe_sitemap_to_df
 
 
 def load_sitemap(sitemap_url: str) -> pd.DataFrame:
-    """Fetch and flatten a sitemap (or sitemap index) into a DataFrame."""
-    return adv.sitemap_to_df(sitemap_url)
+    """Fetch and flatten a sitemap (or sitemap index) into a DataFrame.
+
+    SSRF- and XXE-safe (see :mod:`webapp.sitemap_parse`).
+    """
+    return safe_sitemap_to_df(sitemap_url)
 
 
 def flag_lastmod_issues(sitemap_df: pd.DataFrame) -> pd.DataFrame:

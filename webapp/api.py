@@ -17,9 +17,12 @@ from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from webapp import fetchers
 from webapp.ssrf import UnsafeURLError, validate_public_url
@@ -34,6 +37,18 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# Per-IP rate limiting — the analysis endpoint is expensive (spider + Common Crawl).
+# Behind Fly's proxy the real client IP is in Fly-Client-IP / X-Forwarded-For.
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("fly-client-ip") or request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or get_remote_address(request)
+
+
+limiter = Limiter(key_func=_client_ip)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 DEFAULT_PRIORITY = [
     "news", "opinion", "features", "business",
@@ -284,7 +299,8 @@ def health():
 
 
 @app.post("/api/analyse")
-def analyse(req: AnalyseRequest):
+@limiter.limit("10/minute")
+def analyse(request: Request, req: AnalyseRequest):
     if not req.url.strip():
         raise HTTPException(status_code=400, detail="url is required")
     url = req.url.strip()

@@ -8,15 +8,14 @@ import re
 import time
 from urllib.parse import urljoin, urlparse
 
-import advertools as adv
 import pandas as pd
 import requests
 
-from webapp.ssrf import safe_get, validate_public_url
+from webapp.sitemap_parse import safe_sitemap_to_df
+from webapp.ssrf import safe_get
 
 HEADERS = {"User-Agent": "CrawlBudgetAnalyzer/1.0 (research tool; contact@example.com)"}
 TIMEOUT = 15
-MAX_SITEMAP_URLS = 50_000  # cap to bound memory on hostile / huge sitemaps
 
 
 # ---------------------------------------------------------------------------
@@ -41,13 +40,9 @@ def fetch_sitemap(site_url: str) -> pd.DataFrame:
         pass
 
     for url in candidates:
-        try:
-            validate_public_url(url)
-            df = adv.sitemap_to_df(url)
-            if not df.empty:
-                return df.head(MAX_SITEMAP_URLS) if len(df) > MAX_SITEMAP_URLS else df
-        except Exception:
-            continue
+        df = safe_sitemap_to_df(url)  # SSRF + XXE safe, byte/row capped
+        if not df.empty:
+            return df
     return pd.DataFrame()
 
 

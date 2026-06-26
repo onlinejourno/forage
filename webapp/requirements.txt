@@ -5,3 +5,5 @@ advertools>=0.16.0
 pandas>=2.0.0
 pyarrow>=14.0.0
 pyyaml>=6.0
+defusedxml>=0.7
+slowapi>=0.1.9
