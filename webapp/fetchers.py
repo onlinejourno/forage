@@ -12,8 +12,11 @@ import advertools as adv
 import pandas as pd
 import requests
 
+from webapp.ssrf import safe_get, validate_public_url
+
 HEADERS = {"User-Agent": "CrawlBudgetAnalyzer/1.0 (research tool; contact@example.com)"}
 TIMEOUT = 15
+MAX_SITEMAP_URLS = 50_000  # cap to bound memory on hostile / huge sitemaps
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +33,7 @@ def fetch_sitemap(site_url: str) -> pd.DataFrame:
     ]
     # Also check robots.txt for Sitemap: directives
     try:
-        r = requests.get(f"{base}/robots.txt", headers=HEADERS, timeout=TIMEOUT)
+        r = safe_get(f"{base}/robots.txt", headers=HEADERS, timeout=TIMEOUT)
         for line in r.text.splitlines():
             if line.lower().startswith("sitemap:"):
                 candidates.insert(0, line.split(":", 1)[1].strip())
@@ -39,9 +42,10 @@ def fetch_sitemap(site_url: str) -> pd.DataFrame:
 
     for url in candidates:
         try:
+            validate_public_url(url)
             df = adv.sitemap_to_df(url)
             if not df.empty:
-                return df
+                return df.head(MAX_SITEMAP_URLS) if len(df) > MAX_SITEMAP_URLS else df
         except Exception:
             continue
     return pd.DataFrame()
@@ -91,7 +95,7 @@ def fetch_robots(site_url: str) -> dict:
         "raw": "",
     }
     try:
-        r = requests.get(f"{base}/robots.txt", headers=HEADERS, timeout=TIMEOUT)
+        r = safe_get(f"{base}/robots.txt", headers=HEADERS, timeout=TIMEOUT)
         result["has_robots"] = r.status_code == 200
         result["raw"] = r.text
         for line in r.text.splitlines():
@@ -188,7 +192,7 @@ def spider_depth(site_url: str, max_pages: int = 80) -> pd.DataFrame:
     while queue and len(visited) < max_pages:
         url, depth = queue.pop(0)
         try:
-            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            r = safe_get(url, headers=HEADERS, timeout=TIMEOUT)
             if "text/html" not in r.headers.get("content-type", ""):
                 continue
             links = _extract_links(r.text, base)

@@ -10,6 +10,7 @@ machine) — no database, matching the no-login, public-data design.
 """
 
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from webapp import fetchers
+from webapp.ssrf import UnsafeURLError, validate_public_url
 
 app = FastAPI(title="Crawl-Budget Analyser API", version="1.0.0")
 
@@ -42,6 +44,15 @@ DEFAULT_PRIORITY = [
 JOBS: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=2)
+JOB_TTL = 3600          # seconds — evict finished/stale jobs after an hour
+MAX_COMPETITORS = 5     # cap fan-out: each competitor triggers a full crawl
+
+
+def _prune_jobs() -> None:
+    """Drop jobs older than JOB_TTL. Caller must hold _jobs_lock."""
+    cutoff = time.time() - JOB_TTL
+    for jid in [j for j, v in JOBS.items() if v.get("created_at", 0) < cutoff]:
+        del JOBS[jid]
 
 
 class AnalyseRequest(BaseModel):
@@ -255,10 +266,12 @@ def _run_job(job_id: str, req: AnalyseRequest):
     try:
         result = _build_result(req, set_step)
         with _jobs_lock:
-            JOBS[job_id] = {"status": "done", "step": "Done", "result": result, "error": None}
+            if job_id in JOBS:
+                JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
     except Exception as exc:  # noqa: BLE001 — surface any analysis failure to the client
         with _jobs_lock:
-            JOBS[job_id] = {"status": "error", "step": None, "result": None, "error": str(exc)}
+            if job_id in JOBS:
+                JOBS[job_id].update({"status": "error", "step": None, "result": None, "error": str(exc)})
 
 
 # ---------------------------------------------------------------------------
@@ -277,10 +290,31 @@ def analyse(req: AnalyseRequest):
     url = req.url.strip()
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-        req.url = url
+    try:
+        validate_public_url(url)
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=400, detail=f"refused: {exc}")
+    req.url = url
+
+    # Cap fan-out and drop any competitor that isn't a safe public URL.
+    safe_competitors = []
+    for comp in req.competitors[:MAX_COMPETITORS]:
+        comp = comp.strip()
+        if not comp:
+            continue
+        if not comp.startswith(("http://", "https://")):
+            comp = "https://" + comp
+        try:
+            validate_public_url(comp)
+        except UnsafeURLError:
+            continue
+        safe_competitors.append(comp)
+    req.competitors = safe_competitors
+
     job_id = uuid.uuid4().hex
     with _jobs_lock:
-        JOBS[job_id] = {"status": "running", "step": "Starting…", "result": None, "error": None}
+        _prune_jobs()
+        JOBS[job_id] = {"status": "running", "step": "Starting…", "result": None, "error": None, "created_at": time.time()}
     _pool.submit(_run_job, job_id, req)
     return {"job_id": job_id, "status": "running"}
 
