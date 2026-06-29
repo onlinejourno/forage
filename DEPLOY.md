@@ -1,5 +1,10 @@
 # Deploying to tools.onlinejourno.com on Fly.io
 
+> **Self-hosting?** The app names (`onlinejourno-tools`, `*.fly.dev`) and the
+> `tools.onlinejourno.com` domain below are the **project's** canonical deploy.
+> Substitute **your own** Fly app names and domain throughout — nothing here uses
+> the project's accounts or resources. Bring your own Fly account and (optional) keys.
+
 One subdomain, multiple tools, each at its own path:
 
 ```
