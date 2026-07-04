@@ -26,10 +26,10 @@ def _reverse_then_forward_confirm(ip: str, suffixes: tuple) -> bool:
     if not host.endswith(suffixes):
         return False
     try:
-        resolved_ip, _, _ = socket.gethostbyname_ex(host)
+        _, _, resolved_ips = socket.gethostbyname_ex(host)
     except (socket.herror, socket.gaierror):
         return False
-    return ip in resolved_ip if isinstance(resolved_ip, str) else ip in resolved_ip
+    return ip in resolved_ips
 
 
 def verify_bot_ips(df: pd.DataFrame, bot_name_col: str = "bot_name", ip_col: str = "client") -> pd.DataFrame:
