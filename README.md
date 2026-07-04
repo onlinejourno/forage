@@ -47,6 +47,8 @@ python -m crawl_budget_analyzer.cli analyze \
 
 Output: `output/editorial_briefing.md` — a plain-English report ready to paste into Slack or a strategy doc.
 
+> Note: the Python package name retains the `crawl_budget_analyzer` (-zer) spelling; the user-facing name is Analyser.
+
 ---
 
 ## What the output looks like
@@ -155,6 +157,8 @@ Issues and PRs welcome. Particularly interested in:
 ## Licence
 
 **MIT** — fully open source, use it freely. See [LICENSE.md](LICENSE.md).
+
+Source-available under FSL-1.1; converts to Apache 2.0 after two years. The free tools (Tare, Crawl-Budget Analyser) are MIT. Pulse is a proprietary showcase of the engine.
 
 ## Open source — newsroom tech, by a journalist
 
