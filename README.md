@@ -142,6 +142,8 @@ crawl-budget-analyzer/
 | Server access logs | Actual bot behaviour (ground truth) | Requires server access |
 | Google Search Console | Crawl Stats, index coverage | Requires GSC access |
 
+On a self-hosted install, GSC credentials are a Google service-account JSON key file that stays on your own machine — you pass its local path to `crawl_budget_analyzer.gsc_client.get_client()`, which reads it directly from disk and uses it only for direct calls from your machine to Google's Search Console API; the credentials never leave your machine and are never sent to OnlineJourno.
+
 ---
 
 ## Contributing
