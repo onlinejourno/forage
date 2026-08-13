@@ -32,9 +32,9 @@ actually using them.
 
 ---
 
-## Step 1 — Deploy the crawl budget analyser tool
+## Step 1 — Deploy Prowl
 
-From the `crawl-budget-analyzer` directory:
+From the `prowl` directory:
 
 ```bash
 # Create a persistent volume for the audit log (tracks recently audited sites)
@@ -119,7 +119,7 @@ location /my-new-tool/ {
 | Component | Cost |
 |---|---|
 | nginx proxy (256MB, auto-stop) | ~$0.50/month |
-| Crawl budget analyser (512MB, auto-stop) | ~$3–4/month |
+| Prowl (512MB, auto-stop) | ~$3–4/month |
 | 1GB persistent volume (audit log) | ~$0.15/month |
 | **Total** | **~$4–5/month** |
 
