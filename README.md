@@ -38,7 +38,7 @@ If your newsroom can export Nginx/Apache access logs, the Python library gives y
 ```bash
 pip install -r requirements.txt
 
-python -m crawl_budget_analyzer.cli analyze \
+python -m prowl.cli analyze \
     --log-glob "/var/log/nginx/access.log*" \
     --priority-config example_priority.yaml \
     --site-url yoursite.com \
@@ -46,8 +46,6 @@ python -m crawl_budget_analyzer.cli analyze \
 ```
 
 Output: `output/editorial_briefing.md` — a plain-English report ready to paste into Slack or a strategy doc.
-
-> Note: the user-facing product name is **Prowl**. The Python package/module still uses the `crawl_budget_analyzer` identifier pending the code-level rename.
 
 ---
 
@@ -107,7 +105,7 @@ uvicorn webapp.api:app --reload
 
 ```
 crawl-budget-analyzer/
-├── crawl_budget_analyzer/      # Python library (server-log analysis)
+├── prowl/      # Python library (server-log analysis)
 │   ├── log_parser.py           # Parse Nginx/Apache logs, filter bot traffic
 │   ├── bot_verifier.py         # Reverse-DNS verification (anti-spoofing)
 │   ├── diff_engine.py          # Crawl frequency, depth, waste metrics
@@ -142,7 +140,7 @@ crawl-budget-analyzer/
 | Server access logs | Actual bot behaviour (ground truth) | Requires server access |
 | Google Search Console | Crawl Stats, index coverage | Requires GSC access |
 
-On a self-hosted install, GSC credentials are a Google service-account JSON key file that stays on your own machine — you pass its local path to `crawl_budget_analyzer.gsc_client.get_client()`, which reads it directly from disk and uses it only for direct calls from your machine to Google's Search Console API; the credentials never leave your machine and are never sent to OnlineJourno.
+On a self-hosted install, GSC credentials are a Google service-account JSON key file that stays on your own machine — you pass its local path to `prowl.gsc_client.get_client()`, which reads it directly from disk and uses it only for direct calls from your machine to Google's Search Console API; the credentials never leave your machine and are never sent to OnlineJourno.
 
 ---
 

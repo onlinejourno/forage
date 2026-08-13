@@ -4,7 +4,7 @@ import socket
 
 import pytest
 
-from crawl_budget_analyzer.bot_verifier import _reverse_then_forward_confirm
+from prowl.bot_verifier import _reverse_then_forward_confirm
 
 GOOGLE_SUFFIXES = (".googlebot.com", ".google.com")
 
