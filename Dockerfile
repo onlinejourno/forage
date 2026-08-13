@@ -1,4 +1,4 @@
-# Crawl-Budget Analyser — FastAPI JSON API (OnlineJourno Tools).
+# Prowl — FastAPI JSON API (OnlineJourno Tools).
 # Canonical image for this tool; deployed as the crawl-budget-api Fly app.
 FROM python:3.11-slim
 

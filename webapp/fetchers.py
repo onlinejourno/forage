@@ -14,7 +14,7 @@ import requests
 from webapp.sitemap_parse import safe_sitemap_to_df
 from webapp.ssrf import safe_get
 
-HEADERS = {"User-Agent": "CrawlBudgetAnalyzer/1.0 (research tool; contact@example.com)"}
+HEADERS = {"User-Agent": "Prowl/1.0 (research tool; contact@example.com)"}
 TIMEOUT = 15
 
 

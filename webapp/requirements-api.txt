@@ -1,4 +1,4 @@
-# Crawl-Budget Analyser — FastAPI JSON API (OnlineJourno Tools, Phase 2).
+# Prowl — FastAPI JSON API (OnlineJourno Tools, Phase 2).
 # Reuses the existing fetchers analysis; no Streamlit/Plotly needed server-side.
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0

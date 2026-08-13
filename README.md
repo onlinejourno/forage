@@ -1,4 +1,4 @@
-# News Crawl Budget Analyser
+# Prowl
 
 A tool for journalists, digital editors, and newsroom SEO leads to understand how search engines and AI crawlers actually see their publication — and where the site's structure is working against editorial priorities.
 
@@ -47,7 +47,7 @@ python -m crawl_budget_analyzer.cli analyze \
 
 Output: `output/editorial_briefing.md` — a plain-English report ready to paste into Slack or a strategy doc.
 
-> Note: the Python package name retains the `crawl_budget_analyzer` (-zer) spelling; the user-facing name is Analyser.
+> Note: the user-facing product name is **Prowl**. The Python package/module still uses the `crawl_budget_analyzer` identifier pending the code-level rename.
 
 ---
 
@@ -160,7 +160,7 @@ Issues and PRs welcome. Particularly interested in:
 
 **MIT** — fully open source, use it freely. See [LICENSE.md](LICENSE.md).
 
-Source-available under FSL-1.1; converts to Apache 2.0 after two years. The free tools (Tare, Crawl-Budget Analyser) are MIT. Pulse is a proprietary showcase of the engine.
+Source-available under FSL-1.1; converts to Apache 2.0 after two years. The free tools (Tare, Prowl) are MIT. Pulse is a proprietary showcase of the engine.
 
 ## Open source — newsroom tech, by a journalist
 
