@@ -23,7 +23,7 @@ from webapp.ssrf import safe_get
 MAX_SITEMAP_URLS = 50_000      # total URLs returned
 MAX_SITEMAPS = 50             # documents fetched (index fan-out bound)
 MAX_BYTES = 20 * 1024 * 1024  # 20 MB per document
-HEADERS = {"User-Agent": "Prowl/1.0 (research tool; contact@example.com)"}
+HEADERS = {"User-Agent": "Forage/1.0 (research tool; contact@example.com)"}
 TIMEOUT = 15
 
 

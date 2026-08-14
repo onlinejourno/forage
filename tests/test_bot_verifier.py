@@ -4,7 +4,7 @@ import socket
 
 import pytest
 
-from prowl.bot_verifier import _reverse_then_forward_confirm
+from forage.bot_verifier import _reverse_then_forward_confirm
 
 GOOGLE_SUFFIXES = (".googlebot.com", ".google.com")
 

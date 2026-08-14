@@ -9,7 +9,7 @@ One subdomain, multiple tools, each at its own path:
 
 ```
 tools.onlinejourno.com/                    ← tools index page
-tools.onlinejourno.com/crawl-budget-analyser/
+tools.onlinejourno.com/forage/
 tools.onlinejourno.com/web-bloat-checker/
 ```
 
@@ -23,7 +23,7 @@ paths to the right tool.
 
 ```
 tools.onlinejourno.com   (nginx proxy Fly app — ~$0.50/month)
-    /crawl-budget-analyser/  →  crawl-budget-analyser.fly.dev  (Streamlit, ~$3/month)
+    /forage/                 →  forage.fly.dev                 (Streamlit, ~$3/month)
     /web-bloat-checker/      →  web-bloat-checker.fly.dev      (existing app)
 ```
 
@@ -32,9 +32,9 @@ actually using them.
 
 ---
 
-## Step 1 — Deploy Prowl
+## Step 1 — Deploy Forage
 
-From the `prowl` directory:
+From the `forage` directory:
 
 ```bash
 # Create a persistent volume for the audit log (tracks recently audited sites)
@@ -44,7 +44,7 @@ fly volumes create crawl_data --size 1 --region sin
 fly deploy --config deploy/fly.toml
 ```
 
-Your tool is now live at `https://crawl-budget-analyser.fly.dev`.
+Your tool is now live at `https://forage.fly.dev`.
 
 ---
 
@@ -119,7 +119,7 @@ location /my-new-tool/ {
 | Component | Cost |
 |---|---|
 | nginx proxy (256MB, auto-stop) | ~$0.50/month |
-| Prowl (512MB, auto-stop) | ~$3–4/month |
+| Forage (512MB, auto-stop) | ~$3–4/month |
 | 1GB persistent volume (audit log) | ~$0.15/month |
 | **Total** | **~$4–5/month** |
 
@@ -142,6 +142,6 @@ Set in Fly dashboard or via `fly secrets set`:
 ## Updating a tool
 
 ```bash
-# From the crawl-budget-analyzer directory
+# From the forage directory
 fly deploy --config deploy/fly.toml
 ```

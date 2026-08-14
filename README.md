@@ -1,4 +1,4 @@
-# Prowl
+# Forage
 
 A tool for journalists, digital editors, and newsroom SEO leads to understand how search engines and AI crawlers actually see their publication — and where the site's structure is working against editorial priorities.
 
@@ -22,7 +22,7 @@ This tool surfaces that gap and tells you — in plain English — what to ask t
 
 Enter any news site URL. Get a report in ~60 seconds. Works on your own site and competitors.
 
-→ **[Try it live at tools.onlinejourno.com](https://tools.onlinejourno.com/crawl-budget-analyser)**
+→ **[Try it live at tools.onlinejourno.com](https://tools.onlinejourno.com/forage)**
 
 What it analyses from public data:
 - Sitemap structure — how many URLs per section, how deep they are, whether lastmod dates are accurate
@@ -38,7 +38,7 @@ If your newsroom can export Nginx/Apache access logs, the Python library gives y
 ```bash
 pip install -r requirements.txt
 
-python -m prowl.cli analyze \
+python -m forage.cli analyze \
     --log-glob "/var/log/nginx/access.log*" \
     --priority-config example_priority.yaml \
     --site-url yoursite.com \
@@ -88,11 +88,11 @@ Built as an open-source tool to give journalists a seat at the table in conversa
 
 ## Running the API locally
 
-The dashboard at [tools.onlinejourno.com](https://tools.onlinejourno.com/crawl-budget-analyser) is a thin front-end over this FastAPI JSON API. To self-host the API:
+The dashboard at [tools.onlinejourno.com](https://tools.onlinejourno.com/forage) is a thin front-end over this FastAPI JSON API. To self-host the API:
 
 ```bash
-git clone https://github.com/onlinejourno/news-crawl-budget-analyzer
-cd news-crawl-budget-analyzer
+git clone https://github.com/onlinejourno/forage.git
+cd forage
 pip install -r webapp/requirements-api.txt
 uvicorn webapp.api:app --reload
 ```
@@ -104,8 +104,8 @@ uvicorn webapp.api:app --reload
 ## Project structure
 
 ```
-crawl-budget-analyzer/
-├── prowl/      # Python library (server-log analysis)
+forage/
+├── forage/                     # Python library (server-log analysis)
 │   ├── log_parser.py           # Parse Nginx/Apache logs, filter bot traffic
 │   ├── bot_verifier.py         # Reverse-DNS verification (anti-spoofing)
 │   ├── diff_engine.py          # Crawl frequency, depth, waste metrics
@@ -140,7 +140,7 @@ crawl-budget-analyzer/
 | Server access logs | Actual bot behaviour (ground truth) | Requires server access |
 | Google Search Console | Crawl Stats, index coverage | Requires GSC access |
 
-On a self-hosted install, GSC credentials are a Google service-account JSON key file that stays on your own machine — you pass its local path to `prowl.gsc_client.get_client()`, which reads it directly from disk and uses it only for direct calls from your machine to Google's Search Console API; the credentials never leave your machine and are never sent to OnlineJourno.
+On a self-hosted install, GSC credentials are a Google service-account JSON key file that stays on your own machine — you pass its local path to `forage.gsc_client.get_client()`, which reads it directly from disk and uses it only for direct calls from your machine to Google's Search Console API; the credentials never leave your machine and are never sent to OnlineJourno.
 
 ---
 
@@ -154,11 +154,13 @@ Issues and PRs welcome. Particularly interested in:
 
 ---
 
+## Part of OnlineJourno
+
+Forage is a fully open MIT tool from [OnlineJourno](https://onlinejourno.com). It is also one of the capabilities that feed into **[OnlineJourno Newsroom](https://onlinejourno.com/newsroom)**.
+
 ## Licence
 
 **MIT** — fully open source, use it freely. See [LICENSE.md](LICENSE.md).
-
-Source-available under FSL-1.1; converts to Apache 2.0 after two years. The free tools (Tare, Prowl) are MIT. Pulse is a proprietary showcase of the engine.
 
 ## Open source — newsroom tech, by a journalist
 

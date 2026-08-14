@@ -1,7 +1,7 @@
 """CLI entry point.
 
 Example:
-    python -m prowl.cli analyze \
+    python -m forage.cli analyze \
         --log-glob "/var/log/nginx/access.log*" \
         --sitemap https://example.com/sitemap-news.xml \
         --publish-csv articles.csv \
