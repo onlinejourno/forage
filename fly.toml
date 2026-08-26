@@ -2,6 +2,18 @@ app = 'forage'
 primary_region = 'sin'
 
 
+[env]
+  # Rate-limit key: trust Fly's edge header, which Fly sets and a client cannot
+  # forge. Unset by default in code (peer address only) so a self-hoster on a
+  # bare deploy is safe without configuring anything — see webapp/client_ip.py.
+  #
+  # KNOWN LIMITATION on this deploy: requests arriving via the tools front-end
+  # rewrite reach this app from the front-end's egress address, so every proxied
+  # visitor shares one key. Direct callers key correctly. Giving proxied traffic
+  # a real per-visitor identity needs the front-end to pass one through a header
+  # this app trusts by shared secret — design work, not this setting.
+  FORAGE_TRUSTED_CLIENT_IP_HEADER = "fly-client-ip"
+
 [http_service]
   internal_port = 8080
   force_https = true

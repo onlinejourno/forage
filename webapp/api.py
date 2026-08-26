@@ -19,12 +19,15 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from webapp import fetchers
+from webapp.client_ip import client_ip
+from webapp.robots import ROBOTS_BODY
 from webapp.ssrf import UnsafeURLError, validate_public_url
 
 app = FastAPI(title="Forage API", version="1.0.0")
@@ -40,10 +43,10 @@ app.add_middleware(
 
 
 # Per-IP rate limiting — the analysis endpoint is expensive (spider + Common Crawl).
-# Behind Fly's proxy the real client IP is in Fly-Client-IP / X-Forwarded-For.
+# The key must be unforgeable: see webapp/client_ip.py for why no header is
+# trusted unless the deployment names one in FORAGE_TRUSTED_CLIENT_IP_HEADER.
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("fly-client-ip") or request.headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() or get_remote_address(request)
+    return client_ip(request.headers, get_remote_address(request))
 
 
 limiter = Limiter(key_func=_client_ip)
@@ -292,6 +295,11 @@ def _run_job(job_id: str, req: AnalyseRequest):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+def robots() -> str:
+    return ROBOTS_BODY
+
 
 @app.get("/api/health")
 def health():
