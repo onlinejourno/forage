@@ -164,7 +164,7 @@ Forage is a fully open MIT tool from [OnlineJourno](https://onlinejourno.com). I
 
 ## Open source — newsroom tech, by a journalist
 
-This is one of [OnlineJourno](https://onlinejourno.com)'s **fully open-source** tools (MIT). OnlineJourno's *products* are fair-source; this one is a deliberate gift to the commons — no strings.
+This is one of [OnlineJourno](https://onlinejourno.com)'s **fully open-source** tools (MIT). OnlineJourno's *products* are proprietary; this one is a deliberate gift to the commons — no strings.
 
 **Why a journalist built this:** most newsroom technology is built by engineers *at* news organisations, *for* news organisations. This isn't that. I'm a journalist — 25+ years in digital newsrooms — and I built this because the problem it solves is an *editorial* problem wearing a technical costume: a section that's editorially vital but structurally invisible to crawlers (Opinion, Features) quietly vanishing from search and AI answers, with no one in the newsroom able to see it happen. It's open because the answer shouldn't be locked inside one newsroom.
 
