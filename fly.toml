@@ -1,4 +1,13 @@
-app = 'forage'
+# The Fly app is named prowl-api: this tool was briefly called Prowl, and the
+# app kept that name when the product went back to Forage. This value has to be
+# an app that exists, not the product name -- `fly deploy` against a name with
+# no app behind it does not fail cleanly, it offers to create a new one, which
+# is how you end up with two deployments and traffic still on the old.
+#
+# Renaming the app is a cutover rather than an edit: anything holding the
+# current hostname has to move at the same time. Self-hosting? Change this to
+# your own app name.
+app = 'prowl-api'
 primary_region = 'sin'
 
 
@@ -8,6 +17,20 @@ primary_region = 'sin'
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
+
+  # /api/health existed long before anything called it. A health endpoint
+  # nothing polls tells you nothing: the first report of an outage is a user,
+  # and by then it has been down for as long as nobody happened to look.
+  #
+  # grace_period covers a cold start. This app suspends when idle
+  # (min_machines_running = 0) and waking it costs more than a request timeout
+  # allows -- a tighter check reports a sleeping app as a broken one.
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/api/health'
 
 [[vm]]
   memory = '512mb'
