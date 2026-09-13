@@ -10,6 +10,23 @@
 app = 'prowl-api'
 primary_region = 'sin'
 
+[env]
+  # Finished analyses are written here so the hub can read "the latest run
+  # for this site" after the job that produced it is gone. /data is the volume
+  # below; if it did not mount, the store refuses rather than writing to the
+  # container's disk, and /api/health reports "db": "missing".
+  FORAGE_DB_PATH = "/data/forage.db"
+
+# ONE machine. Job progress lives in process memory, so a second machine
+# answers "job not found" for every poll the proxy hands it -- which is what
+# the tools front-end showed, as "Status check returned 404", from the day the
+# app launched with Fly's default pair. A volume attaches to one machine
+# anyway. Self-hosting on Fly: `fly volumes create forage_data --size 1`, and
+# keep the count at 1.
+[mounts]
+  source = "forage_data"
+  destination = "/data"
+
 
 [http_service]
   internal_port = 8080

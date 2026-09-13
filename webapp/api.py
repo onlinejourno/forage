@@ -9,6 +9,8 @@ GET /api/analyse/{job_id} until status == "done". State is in-memory (single
 machine) — no database, matching the no-login, public-data design.
 """
 
+import logging
+import os
 import threading
 import time
 import uuid
@@ -24,8 +26,11 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from webapp import fetchers
+from webapp import fetchers, store
 from webapp.ssrf import UnsafeURLError, validate_public_url
+from webapp.stringer_auth import target_uri_for, verify_stringer_signature
+
+log = logging.getLogger("forage")
 
 app = FastAPI(title="Forage API", version="1.0.0")
 
@@ -56,6 +61,9 @@ DEFAULT_PRIORITY = [
 ]
 
 # job_id -> {"status": "running"|"done"|"error", "step": str, "result": dict|None, "error": str|None}
+# Progress only. Finished results are also written to webapp/store.py, because
+# this dict is one process's memory: it is empty after a restart, and on a
+# deployment with more than one machine each machine has its own.
 JOBS: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=2)
@@ -283,6 +291,13 @@ def _run_job(job_id: str, req: AnalyseRequest):
         with _jobs_lock:
             if job_id in JOBS:
                 JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
+        # After the job is marked done, so a store fault cannot cost the person
+        # who ran the analysis their result. It costs the hub its "latest",
+        # which /api/health reports and the log records.
+        try:
+            store.save_result(req.url, result)
+        except (store.StoreUnavailable, OSError) as exc:
+            log.error("result for %s not persisted: %s", req.url, exc)
     except Exception as exc:  # noqa: BLE001 — surface any analysis failure to the client
         with _jobs_lock:
             if job_id in JOBS:
@@ -295,7 +310,10 @@ def _run_job(job_id: str, req: AnalyseRequest):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    # "ok" is the process; "db" is whether a finished analysis has anywhere to
+    # go. A volume that failed to mount is a green process with a missing
+    # store, and the first symptom would otherwise be an empty hub screen.
+    return {"ok": True, "db": store.check()}
 
 
 @app.post("/api/analyse")
@@ -342,3 +360,77 @@ def job_status(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
     return job
+
+
+# ---------------------------------------------------------------------------
+# Stringer capability — signed, read-only
+# ---------------------------------------------------------------------------
+
+STRINGER_KEY_ENV = "FORAGE_STRINGER_KEY"
+# Set by the hub from its own configuration for the tenant it verified. Forage
+# never learns which newsroom asked; it is told which site to report on.
+SITE_HEADER = "x-forage-site"
+
+
+def _mismatch_summary(row: dict) -> dict:
+    """The hub's view of a stored run: mismatch and robots findings, nothing heavy.
+
+    Recomputed under DEFAULT_PRIORITY rather than read back from the run.
+    Anyone can run Forage on any site with any priority list, and that run
+    becomes "latest" -- the hub's view must not inherit a stranger's ranking.
+    The raw section summaries are facts about the site; the ranking is not.
+    """
+    result = row["result"]
+    ranks = {s: i + 1 for i, s in enumerate(DEFAULT_PRIORITY)}
+    sm = pd.DataFrame(result.get("sitemap_summary") or [])
+    dd = pd.DataFrame(result.get("depth_summary") or [])
+    return {
+        "state": "ok",
+        "site": row["site"],
+        "analysed_at": row["analysed_at"],
+        "priority": DEFAULT_PRIORITY,
+        "mismatch": _mismatch(sm, dd, ranks, len(DEFAULT_PRIORITY)),
+        "robots_issues": result.get("robots_issues") or [],
+    }
+
+
+@app.get("/stringer/forage/mismatch")
+@limiter.limit("60/minute")
+def stringer_mismatch(request: Request):
+    """Latest stored analysis of the site the hub names, as a summary.
+
+    Read-only by design. An analysis spiders sixty pages and queries Common
+    Crawl with polite delays, and the hub polls capabilities on a sixty-second
+    hint -- an endpoint that ran one would turn a status card into a cost sink
+    and a way for anyone holding a signature to crawl on this install's behalf.
+    Running Forage stays an explicit action a person takes.
+
+    Rate-limited although every rejected call is cheap: it is reachable
+    unauthenticated, and each one still costs an HMAC.
+    """
+    target = target_uri_for(
+        request.headers,
+        request.url.scheme,
+        request.url.netloc,
+        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+    )
+    if not verify_stringer_signature("GET", target, b"", request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    site = (request.headers.get(SITE_HEADER) or "").strip()
+    if not site:
+        raise HTTPException(status_code=400, detail=f"{SITE_HEADER} header is required")
+
+    try:
+        row = store.latest_result(site)
+    except (store.StoreUnavailable, OSError) as exc:
+        # Not exc: this endpoint is reachable from outside and the message
+        # carries the database path.
+        log.error("stringer mismatch: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+
+    if row is None:
+        # 200, not 404: the hub renders any non-2xx as a fault. Nothing stored
+        # is not a fault, it is an instruction -- go run Forage on this site.
+        return {"state": "no_analysis", "site": site, "mismatch": []}
+    return _mismatch_summary(row)
