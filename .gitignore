@@ -4,6 +4,7 @@ output/
 *.parquet
 *.errors.txt
 webapp/audit_log.db
+webapp/forage.db
 
 # secrets / local env + OS junk (pre-public hardening)
 .env

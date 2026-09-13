@@ -99,6 +99,12 @@ uvicorn webapp.api:app --reload
 
 `POST /api/analyse {"url": "..."}` returns a job id; poll `GET /api/analyse/{id}`. Deploy to Fly with a plain `fly deploy` (ships the FastAPI image).
 
+Finished analyses are kept in a SQLite file at `FORAGE_DB_PATH` (default `webapp/forage.db`; the Fly deploy puts it on a volume). Run **one** instance: job progress is in process memory, so a second instance answers `404 job not found` to every poll it receives.
+
+### Newsroom hub capability
+
+`GET /stringer/forage/mismatch` returns the latest stored analysis for the site named in the `X-Forage-Site` header — the mismatch and robots findings only, not the full crawl. It is read-only: running an analysis stays something a person does here or on the dashboard. Requests must carry a Stringer HMAC signature (`webapp/stringer_auth.py`, stdlib only) under `FORAGE_STRINGER_KEY`; with the key unset every request is refused. `/api/health` reports `"db": "ok"` or `"missing"` so a store that has nowhere to write is visible before an empty hub screen is.
+
 ---
 
 ## Project structure

@@ -136,6 +136,8 @@ Set in Fly dashboard or via `fly secrets set`:
 |---|---|
 | `SERPAPI_KEY` | Real Google/Bing indexed page counts per section |
 | `AUDIT_LOG_PATH` | Already set to `/data/audit_log.db` in Dockerfile |
+| `FORAGE_DB_PATH` | Where finished analyses are stored; `fly.toml` sets `/data/forage.db` on the `forage_data` volume |
+| `FORAGE_STRINGER_KEY` | Site key the Newsroom hub signs with; unset = the hub capability refuses everyone |
 
 ---
 
