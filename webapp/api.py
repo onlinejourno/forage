@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import numpy as np
@@ -32,7 +33,21 @@ from webapp.stringer_auth import target_uri_for, verify_stringer_signature
 
 log = logging.getLogger("forage")
 
-app = FastAPI(title="Forage API", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # A run that says "running" from before this process started is not
+    # running. Left alone it holds a quota slot and a spinner forever.
+    try:
+        n = store.reap_interrupted()
+        if n:
+            log.warning("marked %d interrupted run(s) from before startup", n)
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("startup reap skipped, store unavailable: %s", exc)
+    yield
+
+
+app = FastAPI(title="Forage API", version="1.0.0", lifespan=_lifespan)
 
 # Public read-only tool; allow any origin (the front-end proxies it server-side,
 # but direct calls are harmless).
@@ -280,28 +295,49 @@ def _build_result(req: AnalyseRequest, set_step) -> dict:
     }
 
 
-def _run_job(job_id: str, req: AnalyseRequest):
+def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | None = None):
+    """Run one analysis. Dashboard jobs report into JOBS; hub-owned runs report into the store.
+
+    Hub runs carry no JOBS entry at all: the row is the record, and a restart
+    cannot lose it the way it loses this dict.
+    """
     def set_step(step: str):
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id]["step"] = step
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id]["step"] = step
+        if owned is not None:
+            try:
+                store.set_run_step(owned[0], owned[1], step)
+            except (store.StoreUnavailable, OSError) as exc:
+                log.error("run %s step not recorded: %s", owned[1], exc)
 
     try:
         result = _build_result(req, set_step)
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
         # After the job is marked done, so a store fault cannot cost the person
         # who ran the analysis their result. It costs the hub its "latest",
         # which /api/health reports and the log records.
         try:
-            store.save_result(req.url, result)
+            if owned is not None:
+                store.finish_run(owned[0], owned[1], result, None)
+            else:
+                store.save_result(req.url, result)
         except (store.StoreUnavailable, OSError) as exc:
             log.error("result for %s not persisted: %s", req.url, exc)
     except Exception as exc:  # noqa: BLE001 — surface any analysis failure to the client
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id].update({"status": "error", "step": None, "result": None, "error": str(exc)})
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id].update({"status": "error", "step": None, "result": None, "error": str(exc)})
+        if owned is not None:
+            try:
+                store.finish_run(owned[0], owned[1], None, str(exc))
+            except (store.StoreUnavailable, OSError) as exc2:
+                log.error("run %s failure not recorded: %s", owned[1], exc2)
 
 
 # ---------------------------------------------------------------------------
