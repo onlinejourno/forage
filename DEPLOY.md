@@ -124,7 +124,10 @@ location /my-new-tool/ {
 | **Total** | **~$4–5/month** |
 
 Auto-stop means machines sleep when idle and wake in ~2 seconds on first
-request — you only pay for actual usage.
+request — you only pay for actual usage. One consequence: a hub-owned run in
+progress only survives as long as something keeps polling it (`auto_stop_machines`
+can suspend the machine mid-run, and no other machine can pick it back up) — set
+`min_machines_running = 1` to avoid that, at the cost of an always-on machine.
 
 ---
 
@@ -138,6 +141,7 @@ Set in Fly dashboard or via `fly secrets set`:
 | `AUDIT_LOG_PATH` | Already set to `/data/audit_log.db` in Dockerfile |
 | `FORAGE_DB_PATH` | Where finished analyses are stored; `fly.toml` sets `/data/forage.db` on the `forage_data` volume |
 | `FORAGE_STRINGER_KEY` | Site key the Newsroom hub signs with; unset = the hub capability refuses everyone |
+| `FORAGE_HUB_RUNS_PER_DAY` | Runs a newsroom may start through the hub per UTC day (default 20) |
 
 ---
 

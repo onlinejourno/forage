@@ -150,10 +150,16 @@ def test_store_unavailable_is_a_500_without_the_path(client, monkeypatch, tmp_pa
     assert "gone" not in r.text
 
 
-def test_health_reports_the_store(client, monkeypatch, tmp_path):
-    assert client.get("/api/health").json() == {"ok": True, "db": "ok"}
+def test_health_reports_the_store_and_failed_runs(client, monkeypatch, tmp_path):
+    body = client.get("/api/health").json()
+    assert body["ok"] is True and body["db"] == "ok" and body["runs_failed_24h"] == 0
     monkeypatch.setenv(store.DB_PATH_ENV, str(tmp_path / "gone" / "forage.db"))
-    assert client.get("/api/health").json() == {"ok": True, "db": "missing"}
+    assert client.get("/api/health").json() == {"ok": True, "db": "missing", "runs_failed_24h": None}
+
+
+def test_health_survives_a_corrupt_database(client):
+    store.db_path().write_bytes(b"not a database")
+    assert client.get("/api/health").json() == {"ok": True, "db": "ok", "runs_failed_24h": None}
 
 
 def test_finished_job_is_persisted(client, monkeypatch):

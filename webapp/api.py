@@ -5,26 +5,34 @@ Crawl) and returns ready-to-render JSON for the OnlineJourno Tools front-end.
 
 The analysis is slow (spider + Common Crawl with polite delays), so it runs as a
 background job: POST /api/analyse returns a job_id; the client polls
-GET /api/analyse/{job_id} until status == "done". State is in-memory (single
-machine) — no database, matching the no-login, public-data design.
+GET /api/analyse/{job_id} until status == "done". Job progress lives in this
+process's memory only (single machine, matching the no-login, public-data
+design); a finished result — and every hub-owned run — is also written to
+SQLite at FORAGE_DB_PATH, so it survives a restart. See webapp/store.py.
 """
 
 import logging
 import os
+import re
+import sqlite3
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from webapp import fetchers, store
 from webapp.ssrf import UnsafeURLError, validate_public_url
@@ -32,7 +40,25 @@ from webapp.stringer_auth import target_uri_for, verify_stringer_signature
 
 log = logging.getLogger("forage")
 
-app = FastAPI(title="Forage API", version="1.0.0")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # This deploy is one volume-bound machine that auto-stops: no thread in a
+    # new process can finish a row the old one started, so every row still
+    # "running" at startup is dead, however recently it started. Reap all of
+    # them (older_than_seconds=0), not just ones stale by the periodic
+    # reaper's 900s default -- that default stays the right value for any
+    # future *periodic* reap, where "recent" running rows are plausibly real.
+    try:
+        n = store.reap_interrupted(older_than_seconds=0)
+        if n:
+            log.warning("marked %d interrupted run(s) from before startup", n)
+    except (store.StoreUnavailable, OSError, sqlite3.Error) as exc:
+        log.error("startup reap skipped, store unavailable: %s", exc)
+    yield
+
+
+app = FastAPI(title="Forage API", version="1.0.0", lifespan=_lifespan)
 
 # Public read-only tool; allow any origin (the front-end proxies it server-side,
 # but direct calls are harmless).
@@ -49,6 +75,21 @@ app.add_middleware(
 def _client_ip(request: Request) -> str:
     fwd = request.headers.get("fly-client-ip") or request.headers.get("x-forwarded-for", "")
     return fwd.split(",")[0].strip() or get_remote_address(request)
+
+
+def _hub_owner_or_ip(request: Request) -> str:
+    """Rate-limit key for the /stringer/forage/* routes.
+
+    Every newsroom's hub calls Forage from one server IP on behalf of every
+    reporter behind it, so keying on IP would make the whole newsroom share
+    one bucket with every other newsroom on that host. The site header names
+    the owner the hub is asking about -- it is unverified at this point (the
+    signature check runs after slowapi picks a bucket), so it only ever picks
+    which bucket a request counts against, never who is allowed to call; a
+    forged header still has to pass _require_hub_caller to do anything, and
+    each rejected call still costs one HMAC verification.
+    """
+    return (request.headers.get(SITE_HEADER) or "").strip().lower() or _client_ip(request)
 
 
 limiter = Limiter(key_func=_client_ip)
@@ -280,28 +321,60 @@ def _build_result(req: AnalyseRequest, set_step) -> dict:
     }
 
 
-def _run_job(job_id: str, req: AnalyseRequest):
+def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | None = None):
+    """Run one analysis. Dashboard jobs report into JOBS; hub-owned runs report into the store.
+
+    Hub runs carry no JOBS entry at all: the row is the record, and a restart
+    cannot lose it the way it loses this dict.
+    """
     def set_step(step: str):
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id]["step"] = step
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id]["step"] = step
+        if owned is not None:
+            try:
+                store.set_run_step(owned[0], owned[1], step)
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc:
+                log.error("run %s step not recorded: %s", owned[1], exc)
 
     try:
         result = _build_result(req, set_step)
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
         # After the job is marked done, so a store fault cannot cost the person
         # who ran the analysis their result. It costs the hub its "latest",
-        # which /api/health reports and the log records.
+        # which /api/health reports and the log records. A single retry rides
+        # out a transient "database is locked" from a concurrent writer.
+        def _persist():
+            if owned is not None:
+                store.finish_run(owned[0], owned[1], result, None)
+            else:
+                store.save_result(req.url, result)
+
         try:
-            store.save_result(req.url, result)
-        except (store.StoreUnavailable, OSError) as exc:
-            log.error("result for %s not persisted: %s", req.url, exc)
+            _persist()
+        except (store.StoreUnavailable, OSError, sqlite3.Error):
+            time.sleep(0.2)
+            try:
+                _persist()
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc2:
+                if owned is not None:
+                    log.error("run %s result not persisted: %s", owned[1], exc2)
+                else:
+                    log.error("result for %s not persisted: %s", req.url, exc2)
     except Exception as exc:  # noqa: BLE001 — surface any analysis failure to the client
-        with _jobs_lock:
-            if job_id in JOBS:
-                JOBS[job_id].update({"status": "error", "step": None, "result": None, "error": str(exc)})
+        if job_id is not None:
+            with _jobs_lock:
+                if job_id in JOBS:
+                    JOBS[job_id].update({"status": "error", "step": None, "result": None, "error": str(exc)})
+        if owned is not None:
+            try:
+                store.finish_run(owned[0], owned[1], None, str(exc))
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc2:
+                log.error("run %s failure not recorded: %s", owned[1], exc2)
 
 
 # ---------------------------------------------------------------------------
@@ -311,9 +384,17 @@ def _run_job(job_id: str, req: AnalyseRequest):
 @app.get("/api/health")
 def health():
     # "ok" is the process; "db" is whether a finished analysis has anywhere to
-    # go. A volume that failed to mount is a green process with a missing
-    # store, and the first symptom would otherwise be an empty hub screen.
-    return {"ok": True, "db": store.check()}
+    # go; "runs_failed_24h" is whether hub runs are dying quietly. A volume that
+    # failed to mount is a green process with a missing store, and the first
+    # symptom would otherwise be an empty hub screen.
+    db = store.check()
+    failed = None
+    if db == "ok":
+        try:
+            failed = store.runs_failed_recent(24)
+        except (store.StoreUnavailable, OSError, sqlite3.Error):
+            failed = None
+    return {"ok": True, "db": db, "runs_failed_24h": failed}
 
 
 @app.post("/api/analyse")
@@ -395,7 +476,7 @@ def _mismatch_summary(row: dict) -> dict:
 
 
 @app.get("/stringer/forage/mismatch")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
 def stringer_mismatch(request: Request):
     """Latest stored analysis of the site the hub names, as a summary.
 
@@ -408,18 +489,7 @@ def stringer_mismatch(request: Request):
     Rate-limited although every rejected call is cheap: it is reachable
     unauthenticated, and each one still costs an HMAC.
     """
-    target = target_uri_for(
-        request.headers,
-        request.url.scheme,
-        request.url.netloc,
-        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
-    )
-    if not verify_stringer_signature("GET", target, b"", request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    site = (request.headers.get(SITE_HEADER) or "").strip()
-    if not site:
-        raise HTTPException(status_code=400, detail=f"{SITE_HEADER} header is required")
+    site = _require_hub_caller(request, b"")
 
     try:
         row = store.latest_result(site)
@@ -434,3 +504,152 @@ def stringer_mismatch(request: Request):
         # is not a fault, it is an instruction -- go run Forage on this site.
         return {"state": "no_analysis", "site": site, "mismatch": []}
     return _mismatch_summary(row)
+
+
+# ---------------------------------------------------------------------------
+# Stringer capability — signed, starts a run
+# ---------------------------------------------------------------------------
+
+HUB_RUNS_PER_DAY_ENV = "FORAGE_HUB_RUNS_PER_DAY"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _runs_per_day() -> int:
+    # Read per call, not at import: a fail-closed default evaluated at build
+    # time throws during the build and looks like success until the deploy.
+    try:
+        return max(0, int(os.environ.get(HUB_RUNS_PER_DAY_ENV, "20")))
+    except ValueError:
+        return 20
+
+
+def _require_hub_caller(request: Request, body: bytes) -> str:
+    """Verify the hub's signature over this request and return the owner it named."""
+    target = target_uri_for(
+        request.headers,
+        request.url.scheme,
+        request.url.netloc,
+        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+    )
+    if not verify_stringer_signature(request.method, target, body, request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    owner = (request.headers.get(SITE_HEADER) or "").strip().lower()
+    if not owner:
+        raise HTTPException(status_code=400, detail=f"{SITE_HEADER} header is required")
+    return owner
+
+
+def _run_public(row: dict) -> dict:
+    out = {k: row.get(k) for k in ("run_id", "site", "by", "status", "step", "started_at", "finished_at", "error")}
+    if row.get("status") == "done" and "result" in row:
+        out["result"] = row["result"]
+    return out
+
+
+def _next_utc_midnight() -> str:
+    now = datetime.now(timezone.utc)
+    return (datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+
+
+class HubAnalyseRequest(BaseModel):
+    url: str
+    run_id: str
+    by: str = ""
+
+
+def _stringer_analyse_sync(request: Request, body: bytes):
+    owner = _require_hub_caller(request, body)
+    try:
+        req = HubAnalyseRequest.model_validate_json(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be {url, run_id, by?}")
+    if not UUID_RE.match(req.run_id.lower()):
+        raise HTTPException(status_code=400, detail="run_id must be a UUID")
+    run_id = req.run_id.lower()
+
+    try:
+        existing = store.get_run(owner, run_id)
+        if existing is not None:
+            return _run_public(existing)
+
+        url = req.url.strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="url is required")
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        try:
+            validate_public_url(url)
+        except UnsafeURLError as exc:
+            raise HTTPException(status_code=400, detail=f"refused: {exc}")
+
+        try:
+            row = store.start_run(owner, run_id, url, req.by[:120], limit=_runs_per_day())
+        except store.DuplicateRun:
+            return _run_public(store.get_run(owner, run_id))
+        except store.QuotaExceeded:
+            return JSONResponse(
+                status_code=429,
+                content={"state": "quota", "limit": _runs_per_day(), "resets_at": _next_utc_midnight()},
+            )
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer analyse: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+
+    _pool.submit(_run_job, None, AnalyseRequest(url=url), (owner, run_id))
+    return _run_public(row)
+
+
+@app.post("/stringer/forage/analyse")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
+async def stringer_analyse(request: Request):
+    """Start a run on any public site for the newsroom the hub names.
+
+    Idempotent on run_id: the hub's client may retry a POST that timed out,
+    and a person may press the button twice. Either returns the run that
+    exists and starts nothing.
+
+    Only the request body read happens on the event loop; the signature
+    check (synchronous HMAC + a blocking DNS lookup in validate_public_url)
+    and the store calls run in a worker thread via run_in_threadpool, so a
+    slow DNS resolution here cannot stall every other request this process
+    is serving. The @limiter.limit decorator still needs `request` in an
+    async route's signature, which is why this wrapper stays async.
+    """
+    body = await request.body()
+    return await run_in_threadpool(_stringer_analyse_sync, request, body)
+
+
+@app.get("/stringer/forage/run/{run_id}")
+@limiter.limit("600/minute", key_func=_hub_owner_or_ip)  # a screen polls this every 3s
+def stringer_run(request: Request, run_id: str):
+    owner = _require_hub_caller(request, b"")
+    if not UUID_RE.match(run_id.lower()):
+        raise HTTPException(status_code=400, detail="run_id must be a UUID")
+    try:
+        row = store.get_run(owner, run_id.lower())
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer run: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+    if row is None:
+        # 404 for a run that is not this owner's, indistinguishable from one
+        # that never existed: the id tells another newsroom nothing.
+        raise HTTPException(status_code=404, detail="no such run")
+    return _run_public(row)
+
+
+@app.get("/stringer/forage/runs")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
+def stringer_runs(request: Request):
+    owner = _require_hub_caller(request, b"")
+    try:
+        rows = store.list_runs(owner)
+        used = store.runs_today(owner)
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer runs: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+    return {
+        "runs": [_run_public(r) for r in rows],
+        "used_today": used,
+        "limit": _runs_per_day(),
+        "resets_at": _next_utc_midnight(),
+    }
