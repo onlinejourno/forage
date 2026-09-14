@@ -45,6 +45,10 @@ class DuplicateRun(RuntimeError):
     """This owner has already used this run_id. The caller gets the existing run."""
 
 
+class QuotaExceeded(RuntimeError):
+    """This owner has already started `limit` runs today. Carries the count that tripped it."""
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS results (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,18 +148,45 @@ def _row_to_run(row, with_result: bool = True) -> dict:
     return d
 
 
-def start_run(owner: str, run_id: str, site: str, by: str, now: datetime | None = None) -> dict:
+def start_run(
+    owner: str, run_id: str, site: str, by: str, now: datetime | None = None, limit: int | None = None
+) -> dict:
     con = _connect()
     try:
-        try:
-            with con:
+        if limit is None:
+            try:
+                with con:
+                    con.execute(
+                        "INSERT INTO results (host, site, analysed_at, result_json, owner, run_id, run_by, status, step, started_at)"
+                        " VALUES (?, ?, ?, '{}', ?, ?, ?, 'running', 'Starting…', ?)",
+                        (host_of(site), site, _now_iso(now), owner, run_id, by, _now_iso(now)),
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateRun(run_id) from exc
+        else:
+            # IMMEDIATE takes the write lock before reading, so the count this
+            # transaction sees and the row it inserts cannot be split by a
+            # concurrent request landing between the check and the insert.
+            con.isolation_level = None
+            con.execute("BEGIN IMMEDIATE")
+            day = _now_iso(now)[:10]
+            count = con.execute(
+                "SELECT COUNT(*) FROM results WHERE owner = ? AND substr(started_at, 1, 10) = ?", (owner, day)
+            ).fetchone()[0]
+            if count >= limit:
+                con.execute("ROLLBACK")
+                raise QuotaExceeded(count)
+            try:
                 con.execute(
                     "INSERT INTO results (host, site, analysed_at, result_json, owner, run_id, run_by, status, step, started_at)"
                     " VALUES (?, ?, ?, '{}', ?, ?, ?, 'running', 'Starting…', ?)",
                     (host_of(site), site, _now_iso(now), owner, run_id, by, _now_iso(now)),
                 )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateRun(run_id) from exc
+            except sqlite3.IntegrityError as exc:
+                con.execute("ROLLBACK")
+                raise DuplicateRun(run_id) from exc
+            else:
+                con.execute("COMMIT")
     finally:
         con.close()
     return get_run(owner, run_id)

@@ -75,6 +75,26 @@ def test_list_runs_is_capped(db):
     assert len(store.list_runs(OWNER)) == 50
 
 
+def test_start_run_with_limit_refuses_the_nth_plus_one(db):
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=now, limit=2)
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=now, limit=2)
+    with pytest.raises(store.QuotaExceeded):
+        store.start_run(OWNER, _rid(), "https://s.example", "x", now=now, limit=2)
+    # Another owner has its own quota.
+    store.start_run("other.example", _rid(), "https://s.example", "x", now=now, limit=2)
+    # A run from yesterday does not count against today's quota.
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=now - timedelta(days=1))
+    assert store.runs_today(OWNER, now=now) == 2
+
+
+def test_start_run_without_limit_never_refuses(db):
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+    for _ in range(5):
+        store.start_run(OWNER, _rid(), "https://s.example", "x", now=now)
+    assert store.runs_today(OWNER, now=now) == 5
+
+
 def test_runs_today_counts_only_today_utc(db):
     now = datetime(2026, 9, 14, 23, 30, tzinfo=timezone.utc)
     store.start_run(OWNER, _rid(), "https://s.example", "x", now=now)

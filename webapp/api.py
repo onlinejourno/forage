@@ -549,15 +549,15 @@ async def stringer_analyse(request: Request):
         except UnsafeURLError as exc:
             raise HTTPException(status_code=400, detail=f"refused: {exc}")
 
-        if store.runs_today(owner) >= _runs_per_day():
+        try:
+            row = store.start_run(owner, run_id, url, req.by[:120], limit=_runs_per_day())
+        except store.DuplicateRun:
+            return _run_public(store.get_run(owner, run_id))
+        except store.QuotaExceeded:
             return JSONResponse(
                 status_code=429,
                 content={"state": "quota", "limit": _runs_per_day(), "resets_at": _next_utc_midnight()},
             )
-        try:
-            row = store.start_run(owner, run_id, url, req.by[:120])
-        except store.DuplicateRun:
-            return _run_public(store.get_run(owner, run_id))
     except (store.StoreUnavailable, OSError) as exc:
         log.error("stringer analyse: store unavailable: %s", exc)
         raise HTTPException(status_code=500, detail="internal")
