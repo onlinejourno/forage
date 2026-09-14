@@ -185,3 +185,14 @@ def test_runs_failed_recent_counts_errors_only(db):
 
     assert store.runs_failed_recent(hours=24) == 1
     assert store.runs_failed_recent(hours=72) == 2
+
+
+def test_interrupted_runs_do_not_hold_a_quota_slot(db):
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
+    started = now - timedelta(minutes=20)
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=started, limit=10)
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=started, limit=10)
+    store.reap_interrupted(now=now)
+    assert store.runs_today(OWNER, now=now) == 0
+    # A fresh run must not be refused by the now-interrupted pair.
+    store.start_run(OWNER, _rid(), "https://s.example", "x", now=now, limit=1)

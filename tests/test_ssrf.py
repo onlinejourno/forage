@@ -32,3 +32,10 @@ def test_blocks_unsafe(url):
 ])
 def test_allows_public(url):
     assert validate_public_url(url) == url
+
+
+def test_overlong_label_is_refused_not_a_crash():
+    """socket.getaddrinfo raises UnicodeError (not socket.gaierror) for a hostname
+    label over 63 octets -- an unguarded 500 instead of the intended 400 refusal."""
+    with pytest.raises(UnsafeURLError):
+        validate_public_url("https://" + "a" * 70 + ".example")

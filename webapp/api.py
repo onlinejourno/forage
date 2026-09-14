@@ -5,8 +5,10 @@ Crawl) and returns ready-to-render JSON for the OnlineJourno Tools front-end.
 
 The analysis is slow (spider + Common Crawl with polite delays), so it runs as a
 background job: POST /api/analyse returns a job_id; the client polls
-GET /api/analyse/{job_id} until status == "done". State is in-memory (single
-machine) — no database, matching the no-login, public-data design.
+GET /api/analyse/{job_id} until status == "done". Job progress lives in this
+process's memory only (single machine, matching the no-login, public-data
+design); a finished result — and every hub-owned run — is also written to
+SQLite at FORAGE_DB_PATH, so it survives a restart. See webapp/store.py.
 """
 
 import logging
@@ -30,6 +32,7 @@ from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from webapp import fetchers, store
 from webapp.ssrf import UnsafeURLError, validate_public_url
@@ -40,13 +43,17 @@ log = logging.getLogger("forage")
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # A run that says "running" from before this process started is not
-    # running. Left alone it holds a quota slot and a spinner forever.
+    # This deploy is one volume-bound machine that auto-stops: no thread in a
+    # new process can finish a row the old one started, so every row still
+    # "running" at startup is dead, however recently it started. Reap all of
+    # them (older_than_seconds=0), not just ones stale by the periodic
+    # reaper's 900s default -- that default stays the right value for any
+    # future *periodic* reap, where "recent" running rows are plausibly real.
     try:
-        n = store.reap_interrupted()
+        n = store.reap_interrupted(older_than_seconds=0)
         if n:
             log.warning("marked %d interrupted run(s) from before startup", n)
-    except (store.StoreUnavailable, OSError) as exc:
+    except (store.StoreUnavailable, OSError, sqlite3.Error) as exc:
         log.error("startup reap skipped, store unavailable: %s", exc)
     yield
 
@@ -68,6 +75,21 @@ app.add_middleware(
 def _client_ip(request: Request) -> str:
     fwd = request.headers.get("fly-client-ip") or request.headers.get("x-forwarded-for", "")
     return fwd.split(",")[0].strip() or get_remote_address(request)
+
+
+def _hub_owner_or_ip(request: Request) -> str:
+    """Rate-limit key for the /stringer/forage/* routes.
+
+    Every newsroom's hub calls Forage from one server IP on behalf of every
+    reporter behind it, so keying on IP would make the whole newsroom share
+    one bucket with every other newsroom on that host. The site header names
+    the owner the hub is asking about -- it is unverified at this point (the
+    signature check runs after slowapi picks a bucket), so it only ever picks
+    which bucket a request counts against, never who is allowed to call; a
+    forged header still has to pass _require_hub_caller to do anything, and
+    each rejected call still costs one HMAC verification.
+    """
+    return (request.headers.get(SITE_HEADER) or "").strip().lower() or _client_ip(request)
 
 
 limiter = Limiter(key_func=_client_ip)
@@ -313,7 +335,7 @@ def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | N
         if owned is not None:
             try:
                 store.set_run_step(owned[0], owned[1], step)
-            except (store.StoreUnavailable, OSError) as exc:
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc:
                 log.error("run %s step not recorded: %s", owned[1], exc)
 
     try:
@@ -324,14 +346,25 @@ def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | N
                     JOBS[job_id].update({"status": "done", "step": "Done", "result": result, "error": None})
         # After the job is marked done, so a store fault cannot cost the person
         # who ran the analysis their result. It costs the hub its "latest",
-        # which /api/health reports and the log records.
-        try:
+        # which /api/health reports and the log records. A single retry rides
+        # out a transient "database is locked" from a concurrent writer.
+        def _persist():
             if owned is not None:
                 store.finish_run(owned[0], owned[1], result, None)
             else:
                 store.save_result(req.url, result)
-        except (store.StoreUnavailable, OSError) as exc:
-            log.error("result for %s not persisted: %s", req.url, exc)
+
+        try:
+            _persist()
+        except (store.StoreUnavailable, OSError, sqlite3.Error):
+            time.sleep(0.2)
+            try:
+                _persist()
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc2:
+                if owned is not None:
+                    log.error("run %s result not persisted: %s", owned[1], exc2)
+                else:
+                    log.error("result for %s not persisted: %s", req.url, exc2)
     except Exception as exc:  # noqa: BLE001 — surface any analysis failure to the client
         if job_id is not None:
             with _jobs_lock:
@@ -340,7 +373,7 @@ def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | N
         if owned is not None:
             try:
                 store.finish_run(owned[0], owned[1], None, str(exc))
-            except (store.StoreUnavailable, OSError) as exc2:
+            except (store.StoreUnavailable, OSError, sqlite3.Error) as exc2:
                 log.error("run %s failure not recorded: %s", owned[1], exc2)
 
 
@@ -443,7 +476,7 @@ def _mismatch_summary(row: dict) -> dict:
 
 
 @app.get("/stringer/forage/mismatch")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
 def stringer_mismatch(request: Request):
     """Latest stored analysis of the site the hub names, as a summary.
 
@@ -524,16 +557,7 @@ class HubAnalyseRequest(BaseModel):
     by: str = ""
 
 
-@app.post("/stringer/forage/analyse")
-@limiter.limit("60/minute")
-async def stringer_analyse(request: Request):
-    """Start a run on any public site for the newsroom the hub names.
-
-    Idempotent on run_id: the hub's client may retry a POST that timed out,
-    and a person may press the button twice. Either returns the run that
-    exists and starts nothing.
-    """
-    body = await request.body()
+def _stringer_analyse_sync(request: Request, body: bytes):
     owner = _require_hub_caller(request, body)
     try:
         req = HubAnalyseRequest.model_validate_json(body)
@@ -575,8 +599,28 @@ async def stringer_analyse(request: Request):
     return _run_public(row)
 
 
+@app.post("/stringer/forage/analyse")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
+async def stringer_analyse(request: Request):
+    """Start a run on any public site for the newsroom the hub names.
+
+    Idempotent on run_id: the hub's client may retry a POST that timed out,
+    and a person may press the button twice. Either returns the run that
+    exists and starts nothing.
+
+    Only the request body read happens on the event loop; the signature
+    check (synchronous HMAC + a blocking DNS lookup in validate_public_url)
+    and the store calls run in a worker thread via run_in_threadpool, so a
+    slow DNS resolution here cannot stall every other request this process
+    is serving. The @limiter.limit decorator still needs `request` in an
+    async route's signature, which is why this wrapper stays async.
+    """
+    body = await request.body()
+    return await run_in_threadpool(_stringer_analyse_sync, request, body)
+
+
 @app.get("/stringer/forage/run/{run_id}")
-@limiter.limit("120/minute")
+@limiter.limit("600/minute", key_func=_hub_owner_or_ip)  # a screen polls this every 3s
 def stringer_run(request: Request, run_id: str):
     owner = _require_hub_caller(request, b"")
     if not UUID_RE.match(run_id.lower()):
@@ -594,7 +638,7 @@ def stringer_run(request: Request, run_id: str):
 
 
 @app.get("/stringer/forage/runs")
-@limiter.limit("60/minute")
+@limiter.limit("60/minute", key_func=_hub_owner_or_ip)
 def stringer_runs(request: Request):
     owner = _require_hub_caller(request, b"")
     try:

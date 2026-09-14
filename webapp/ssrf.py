@@ -53,7 +53,10 @@ def validate_public_url(raw: str) -> str:
         raise UnsafeURLError("URL has no host")
     try:
         infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as exc:
+    except (socket.gaierror, UnicodeError) as exc:
+        # UnicodeError: idna encoding rejects the host outright (e.g. a label
+        # over 63 octets) before any lookup is attempted. Either way this is a
+        # refusal, not a server fault -- the caller gets a 400, not a 500.
         raise UnsafeURLError(f"could not resolve host {host!r}") from exc
     for info in infos:
         if _ip_blocked(info[4][0]):

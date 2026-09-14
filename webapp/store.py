@@ -49,6 +49,14 @@ class QuotaExceeded(RuntimeError):
     """This owner has already started `limit` runs today. Carries the count that tripped it."""
 
 
+# A run reap_interrupted marked as an interrupted-not-really-run must not still
+# occupy a quota slot -- the process that was going to finish it is gone, and
+# the owner shouldn't lose a run they never got a result for. Both quota COUNT
+# queries (start_run's own check and runs_today, which the hub's /runs screen
+# reads) must agree on this predicate, so it lives in one place.
+_COUNTS_TOWARD_QUOTA = "NOT (status = 'error' AND error = 'interrupted')"
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS results (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,7 +179,9 @@ def start_run(
             con.execute("BEGIN IMMEDIATE")
             day = _now_iso(now)[:10]
             count = con.execute(
-                "SELECT COUNT(*) FROM results WHERE owner = ? AND substr(started_at, 1, 10) = ?", (owner, day)
+                "SELECT COUNT(*) FROM results WHERE owner = ? AND substr(started_at, 1, 10) = ? AND "
+                + _COUNTS_TOWARD_QUOTA,
+                (owner, day),
             ).fetchone()[0]
             if count >= limit:
                 con.execute("ROLLBACK")
@@ -244,14 +254,19 @@ def runs_today(owner: str, now: datetime | None = None) -> int:
     con = _connect()
     try:
         return con.execute(
-            "SELECT COUNT(*) FROM results WHERE owner = ? AND substr(started_at, 1, 10) = ?", (owner, day)
+            "SELECT COUNT(*) FROM results WHERE owner = ? AND substr(started_at, 1, 10) = ? AND "
+            + _COUNTS_TOWARD_QUOTA,
+            (owner, day),
         ).fetchone()[0]
     finally:
         con.close()
 
 
 def reap_interrupted(older_than_seconds: int = 900, now: datetime | None = None) -> int:
-    """A run still 'running' after a restart is not running. Say so, and free its quota slot."""
+    """A run still 'running' after a restart is not running. Say so, and free its
+    quota slot -- both start_run's own count and runs_today exclude a row this
+    marks 'error'/'interrupted' (see _COUNTS_TOWARD_QUOTA), so the owner does not
+    lose a run to a process that died before producing a result."""
     cutoff = ((now or datetime.now(timezone.utc)) - timedelta(seconds=older_than_seconds)).isoformat()
     con = _connect()
     try:

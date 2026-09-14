@@ -106,7 +106,7 @@ Finished analyses are kept in a SQLite file at `FORAGE_DB_PATH` (default `webapp
 Signed with the Stringer HMAC profile (`webapp/stringer_auth.py`, stdlib only) under `FORAGE_STRINGER_KEY`; with the key unset every request is refused. The `X-Forage-Site` header names the newsroom the hub verified — Forage treats it as the owner of what it stores.
 
 - `GET /stringer/forage/mismatch` — the latest stored analysis of the owner's own site, summary only.
-- `POST /stringer/forage/analyse {url, run_id, by}` — start a run on any public site for the owner. Idempotent on `run_id` (a UUID the caller mints). Twenty runs per owner per UTC day (`FORAGE_HUB_RUNS_PER_DAY`); the next is `429 {"state":"quota","resets_at":...}`.
+- `POST /stringer/forage/analyse {url, run_id, by}` — start a run on any public site for the owner. Idempotent on `run_id` (a UUID the caller mints). Twenty runs per owner per UTC day (`FORAGE_HUB_RUNS_PER_DAY`); the next is `429 {"state":"quota","limit":20,"resets_at":...}` — `limit` is the actual per-day cap in effect, so a caller doesn't have to hardcode it.
 - `GET /stringer/forage/run/{run_id}` — one run, with its result when done. Another owner's run is 404.
 - `GET /stringer/forage/runs` — the owner's last 50 runs and today's usage.
 

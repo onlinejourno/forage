@@ -124,7 +124,10 @@ location /my-new-tool/ {
 | **Total** | **~$4–5/month** |
 
 Auto-stop means machines sleep when idle and wake in ~2 seconds on first
-request — you only pay for actual usage.
+request — you only pay for actual usage. One consequence: a hub-owned run in
+progress only survives as long as something keeps polling it (`auto_stop_machines`
+can suspend the machine mid-run, and no other machine can pick it back up) — set
+`min_machines_running = 1` to avoid that, at the cost of an always-on machine.
 
 ---
 
