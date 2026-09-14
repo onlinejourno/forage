@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import socket
 import uuid
 
 import pytest
@@ -15,6 +16,19 @@ KEY = "runs-test-key"
 HOST = "prowl-api.example"
 OWNER = "acj.example"
 
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _fake_getaddrinfo(host, *args, **kwargs):
+    """``*.example`` is IANA-reserved (RFC 2606) and never resolves via real DNS,
+    anywhere -- but these tests must post a *.example analysis target (public-repo
+    rule: placeholders only). Resolve it to a known-public literal IP instead, so
+    ``validate_public_url``'s real SSRF logic still runs, just without depending
+    on live DNS for a domain that can never have any."""
+    if isinstance(host, str) and host.endswith(".example"):
+        return _REAL_GETADDRINFO("93.184.216.34", *args, **kwargs)
+    return _REAL_GETADDRINFO(host, *args, **kwargs)
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -22,6 +36,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv(api.STRINGER_KEY_ENV, KEY)
     # Never crawl in tests.
     monkeypatch.setattr(api, "_build_result", lambda req, set_step: {"site": req.url, "sitemap_summary": [], "depth_summary": [], "robots_issues": []})
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
     return TestClient(api.app)
 
 
@@ -70,3 +85,67 @@ def test_startup_reaps_interrupted_runs(tmp_path, monkeypatch):
     with TestClient(api.app):
         pass  # lifespan startup runs here
     assert store.list_runs(OWNER)[0]["error"] == "interrupted"
+
+
+def test_analyse_starts_a_run_for_the_owner(client):
+    rid = str(uuid.uuid4())
+    r = _post(client, {"url": "https://site.example", "run_id": rid, "by": "A Student"})
+    assert r.status_code == 200, r.text
+    assert r.json()["run_id"] == rid and r.json()["status"] in ("running", "done")
+    assert store.get_run(OWNER, rid)["by"] == "A Student"
+
+
+def test_analyse_unsigned_is_401(client):
+    raw = json.dumps({"url": "https://site.example", "run_id": str(uuid.uuid4())})
+    assert client.post("/stringer/forage/analyse", content=raw, headers={"host": HOST}).status_code == 401
+
+
+def test_analyse_wrong_key_is_401(client):
+    assert _post(client, {"url": "https://site.example", "run_id": str(uuid.uuid4())}, key="nope").status_code == 401
+
+
+def test_analyse_tampered_body_is_401(client):
+    raw = json.dumps({"url": "https://site.example", "run_id": str(uuid.uuid4())})
+    h = _signed("POST", "/stringer/forage/analyse", raw)
+    r = client.post("/stringer/forage/analyse", content=raw.replace("site.example", "evil.example"), headers=h)
+    assert r.status_code == 401
+
+
+def test_analyse_without_owner_header_is_400(client):
+    assert _post(client, {"url": "https://site.example", "run_id": str(uuid.uuid4())}, owner=None).status_code == 400
+
+
+def test_analyse_run_id_must_be_a_uuid(client):
+    r = _post(client, {"url": "https://site.example", "run_id": "not-a-uuid"})
+    assert r.status_code == 400 and "run_id" in r.text
+
+
+def test_analyse_is_idempotent_on_run_id(client):
+    rid = str(uuid.uuid4())
+    a = _post(client, {"url": "https://site.example", "run_id": rid})
+    b = _post(client, {"url": "https://other.example", "run_id": rid})
+    assert a.status_code == 200 and b.status_code == 200
+    assert b.json()["site"] == "https://site.example", "the second POST returned the existing run and started nothing"
+    assert store.runs_today(OWNER) == 1
+
+
+def test_analyse_refuses_private_targets(client):
+    r = _post(client, {"url": "http://127.0.0.1/", "run_id": str(uuid.uuid4())})
+    assert r.status_code == 400 and "refused" in r.text
+    assert store.runs_today(OWNER) == 0, "a refused URL does not spend quota"
+
+
+def test_analyse_quota_is_per_owner_per_day(client, monkeypatch):
+    monkeypatch.setenv(api.HUB_RUNS_PER_DAY_ENV, "2")
+    for _ in range(2):
+        assert _post(client, {"url": "https://site.example", "run_id": str(uuid.uuid4())}).status_code == 200
+    r = _post(client, {"url": "https://site.example", "run_id": str(uuid.uuid4())})
+    assert r.status_code == 429
+    assert r.json()["state"] == "quota" and r.json()["resets_at"].endswith("T00:00:00+00:00")
+    # Another owner is unaffected.
+    assert _post(client, {"url": "https://site.example", "run_id": str(uuid.uuid4())}, owner="other.example").status_code == 200
+
+
+def test_quota_default_is_twenty(client, monkeypatch):
+    monkeypatch.delenv(api.HUB_RUNS_PER_DAY_ENV, raising=False)
+    assert api._runs_per_day() == 20

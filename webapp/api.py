@@ -11,17 +11,20 @@ machine) — no database, matching the no-login, public-data design.
 
 import logging
 import os
+import re
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -444,18 +447,7 @@ def stringer_mismatch(request: Request):
     Rate-limited although every rejected call is cheap: it is reachable
     unauthenticated, and each one still costs an HMAC.
     """
-    target = target_uri_for(
-        request.headers,
-        request.url.scheme,
-        request.url.netloc,
-        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
-    )
-    if not verify_stringer_signature("GET", target, b"", request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
-        raise HTTPException(status_code=401, detail="unauthorized")
-
-    site = (request.headers.get(SITE_HEADER) or "").strip()
-    if not site:
-        raise HTTPException(status_code=400, detail=f"{SITE_HEADER} header is required")
+    site = _require_hub_caller(request, b"")
 
     try:
         row = store.latest_result(site)
@@ -470,3 +462,105 @@ def stringer_mismatch(request: Request):
         # is not a fault, it is an instruction -- go run Forage on this site.
         return {"state": "no_analysis", "site": site, "mismatch": []}
     return _mismatch_summary(row)
+
+
+# ---------------------------------------------------------------------------
+# Stringer capability — signed, starts a run
+# ---------------------------------------------------------------------------
+
+HUB_RUNS_PER_DAY_ENV = "FORAGE_HUB_RUNS_PER_DAY"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _runs_per_day() -> int:
+    # Read per call, not at import: a fail-closed default evaluated at build
+    # time throws during the build and looks like success until the deploy.
+    try:
+        return max(0, int(os.environ.get(HUB_RUNS_PER_DAY_ENV, "20")))
+    except ValueError:
+        return 20
+
+
+def _require_hub_caller(request: Request, body: bytes) -> str:
+    """Verify the hub's signature over this request and return the owner it named."""
+    target = target_uri_for(
+        request.headers,
+        request.url.scheme,
+        request.url.netloc,
+        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+    )
+    if not verify_stringer_signature(request.method, target, body, request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    owner = (request.headers.get(SITE_HEADER) or "").strip().lower()
+    if not owner:
+        raise HTTPException(status_code=400, detail=f"{SITE_HEADER} header is required")
+    return owner
+
+
+def _run_public(row: dict) -> dict:
+    out = {k: row.get(k) for k in ("run_id", "site", "by", "status", "step", "started_at", "finished_at", "error")}
+    if row.get("status") == "done":
+        out["result"] = row.get("result")
+    return out
+
+
+def _next_utc_midnight() -> str:
+    now = datetime.now(timezone.utc)
+    return (datetime(now.year, now.month, now.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+
+
+class HubAnalyseRequest(BaseModel):
+    url: str
+    run_id: str
+    by: str = ""
+
+
+@app.post("/stringer/forage/analyse")
+@limiter.limit("60/minute")
+async def stringer_analyse(request: Request):
+    """Start a run on any public site for the newsroom the hub names.
+
+    Idempotent on run_id: the hub's client may retry a POST that timed out,
+    and a person may press the button twice. Either returns the run that
+    exists and starts nothing.
+    """
+    body = await request.body()
+    owner = _require_hub_caller(request, body)
+    try:
+        req = HubAnalyseRequest.model_validate_json(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be {url, run_id, by?}")
+    if not UUID_RE.match(req.run_id.lower()):
+        raise HTTPException(status_code=400, detail="run_id must be a UUID")
+    run_id = req.run_id.lower()
+
+    try:
+        existing = store.get_run(owner, run_id)
+        if existing is not None:
+            return _run_public(existing)
+
+        url = req.url.strip()
+        if not url:
+            raise HTTPException(status_code=400, detail="url is required")
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        try:
+            validate_public_url(url)
+        except UnsafeURLError as exc:
+            raise HTTPException(status_code=400, detail=f"refused: {exc}")
+
+        if store.runs_today(owner) >= _runs_per_day():
+            return JSONResponse(
+                status_code=429,
+                content={"state": "quota", "limit": _runs_per_day(), "resets_at": _next_utc_midnight()},
+            )
+        try:
+            row = store.start_run(owner, run_id, url, req.by[:120])
+        except store.DuplicateRun:
+            return _run_public(store.get_run(owner, run_id))
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer analyse: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+
+    _pool.submit(_run_job, None, AnalyseRequest(url=url), (owner, run_id))
+    return _run_public(row)
