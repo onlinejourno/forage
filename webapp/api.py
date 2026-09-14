@@ -12,6 +12,7 @@ machine) — no database, matching the no-login, public-data design.
 import logging
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -350,9 +351,17 @@ def _run_job(job_id: str | None, req: AnalyseRequest, owned: tuple[str, str] | N
 @app.get("/api/health")
 def health():
     # "ok" is the process; "db" is whether a finished analysis has anywhere to
-    # go. A volume that failed to mount is a green process with a missing
-    # store, and the first symptom would otherwise be an empty hub screen.
-    return {"ok": True, "db": store.check()}
+    # go; "runs_failed_24h" is whether hub runs are dying quietly. A volume that
+    # failed to mount is a green process with a missing store, and the first
+    # symptom would otherwise be an empty hub screen.
+    db = store.check()
+    failed = None
+    if db == "ok":
+        try:
+            failed = store.runs_failed_recent(24)
+        except (store.StoreUnavailable, OSError, sqlite3.Error):
+            failed = None
+    return {"ok": True, "db": db, "runs_failed_24h": failed}
 
 
 @app.post("/api/analyse")

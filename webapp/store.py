@@ -264,3 +264,14 @@ def reap_interrupted(older_than_seconds: int = 900, now: datetime | None = None)
             return cur.rowcount
     finally:
         con.close()
+
+
+def runs_failed_recent(hours: int = 24, now: datetime | None = None) -> int:
+    since = ((now or datetime.now(timezone.utc)) - timedelta(hours=hours)).isoformat()
+    con = _connect()
+    try:
+        return con.execute(
+            "SELECT COUNT(*) FROM results WHERE status = 'error' AND finished_at >= ?", (since,)
+        ).fetchone()[0]
+    finally:
+        con.close()

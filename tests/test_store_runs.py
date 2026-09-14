@@ -161,3 +161,27 @@ def test_existing_database_with_several_rows_upgrades_in_place(tmp_path, monkeyp
     runs = store.list_runs("acj.example")
     assert len(runs) == 1
     assert runs[0]["run_id"] == new_rid
+
+
+def test_runs_failed_recent_counts_errors_only(db):
+    import sqlite3
+
+    a, b, c = _rid(), _rid(), _rid()
+    store.start_run(OWNER, a, "https://s.example", "x")
+    store.start_run(OWNER, b, "https://s.example", "x")
+    store.start_run(OWNER, c, "https://s.example", "x")
+    store.finish_run(OWNER, a, None, "boom")
+    store.finish_run(OWNER, b, {"n": 1}, None)
+    store.finish_run(OWNER, c, None, "old error")
+
+    # Manually set c's finished_at to 48 hours ago
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    con = sqlite3.connect(store.db_path())
+    try:
+        con.execute("UPDATE results SET finished_at = ? WHERE run_id = ?", (old_time, c))
+        con.commit()
+    finally:
+        con.close()
+
+    assert store.runs_failed_recent(hours=24) == 1
+    assert store.runs_failed_recent(hours=72) == 2

@@ -103,7 +103,14 @@ Finished analyses are kept in a SQLite file at `FORAGE_DB_PATH` (default `webapp
 
 ### Newsroom hub capability
 
-`GET /stringer/forage/mismatch` returns the latest stored analysis for the site named in the `X-Forage-Site` header — the mismatch and robots findings only, not the full crawl. It is read-only: running an analysis stays something a person does here or on the dashboard. Requests must carry a Stringer HMAC signature (`webapp/stringer_auth.py`, stdlib only) under `FORAGE_STRINGER_KEY`; with the key unset every request is refused. `/api/health` reports `"db": "ok"` or `"missing"` so a store that has nowhere to write is visible before an empty hub screen is.
+Signed with the Stringer HMAC profile (`webapp/stringer_auth.py`, stdlib only) under `FORAGE_STRINGER_KEY`; with the key unset every request is refused. The `X-Forage-Site` header names the newsroom the hub verified — Forage treats it as the owner of what it stores.
+
+- `GET /stringer/forage/mismatch` — the latest stored analysis of the owner's own site, summary only.
+- `POST /stringer/forage/analyse {url, run_id, by}` — start a run on any public site for the owner. Idempotent on `run_id` (a UUID the caller mints). Twenty runs per owner per UTC day (`FORAGE_HUB_RUNS_PER_DAY`); the next is `429 {"state":"quota","resets_at":...}`.
+- `GET /stringer/forage/run/{run_id}` — one run, with its result when done. Another owner's run is 404.
+- `GET /stringer/forage/runs` — the owner's last 50 runs and today's usage.
+
+`/api/health` reports `"db"` (`ok` / `missing`) and `"runs_failed_24h"`.
 
 ---
 
