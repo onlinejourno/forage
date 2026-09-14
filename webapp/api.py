@@ -499,8 +499,8 @@ def _require_hub_caller(request: Request, body: bytes) -> str:
 
 def _run_public(row: dict) -> dict:
     out = {k: row.get(k) for k in ("run_id", "site", "by", "status", "step", "started_at", "finished_at", "error")}
-    if row.get("status") == "done":
-        out["result"] = row.get("result")
+    if row.get("status") == "done" and "result" in row:
+        out["result"] = row["result"]
     return out
 
 
@@ -564,3 +564,39 @@ async def stringer_analyse(request: Request):
 
     _pool.submit(_run_job, None, AnalyseRequest(url=url), (owner, run_id))
     return _run_public(row)
+
+
+@app.get("/stringer/forage/run/{run_id}")
+@limiter.limit("120/minute")
+def stringer_run(request: Request, run_id: str):
+    owner = _require_hub_caller(request, b"")
+    if not UUID_RE.match(run_id.lower()):
+        raise HTTPException(status_code=400, detail="run_id must be a UUID")
+    try:
+        row = store.get_run(owner, run_id.lower())
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer run: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+    if row is None:
+        # 404 for a run that is not this owner's, indistinguishable from one
+        # that never existed: the id tells another newsroom nothing.
+        raise HTTPException(status_code=404, detail="no such run")
+    return _run_public(row)
+
+
+@app.get("/stringer/forage/runs")
+@limiter.limit("60/minute")
+def stringer_runs(request: Request):
+    owner = _require_hub_caller(request, b"")
+    try:
+        rows = store.list_runs(owner)
+        used = store.runs_today(owner)
+    except (store.StoreUnavailable, OSError) as exc:
+        log.error("stringer runs: store unavailable: %s", exc)
+        raise HTTPException(status_code=500, detail="internal")
+    return {
+        "runs": [_run_public(r) for r in rows],
+        "used_today": used,
+        "limit": _runs_per_day(),
+        "resets_at": _next_utc_midnight(),
+    }

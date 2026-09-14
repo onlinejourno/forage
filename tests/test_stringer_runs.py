@@ -149,3 +149,50 @@ def test_analyse_quota_is_per_owner_per_day(client, monkeypatch):
 def test_quota_default_is_twenty(client, monkeypatch):
     monkeypatch.delenv(api.HUB_RUNS_PER_DAY_ENV, raising=False)
     assert api._runs_per_day() == 20
+
+
+def _get(client, path, **kw):
+    return client.get(path, headers=_signed("GET", path, **kw))
+
+
+def test_run_is_readable_by_its_owner_only(client):
+    rid = str(uuid.uuid4())
+    _post(client, {"url": "https://site.example", "run_id": rid})
+    mine = _get(client, f"/stringer/forage/run/{rid}")
+    assert mine.status_code == 200 and mine.json()["run_id"] == rid
+    theirs = _get(client, f"/stringer/forage/run/{rid}", owner="other.example")
+    assert theirs.status_code == 404
+
+
+def test_done_run_carries_its_result(client):
+    rid = str(uuid.uuid4())
+    store.start_run(OWNER, rid, "https://site.example", "x")
+    store.finish_run(OWNER, rid, {"site": "https://site.example", "mismatch": []}, None)
+    body = _get(client, f"/stringer/forage/run/{rid}").json()
+    assert body["status"] == "done" and body["result"]["mismatch"] == []
+
+
+def test_running_run_has_no_result_key(client):
+    rid = str(uuid.uuid4())
+    store.start_run(OWNER, rid, "https://site.example", "x")
+    assert "result" not in _get(client, f"/stringer/forage/run/{rid}").json()
+
+
+def test_runs_lists_the_owners_runs_with_quota(client, monkeypatch):
+    monkeypatch.setenv(api.HUB_RUNS_PER_DAY_ENV, "5")
+    rid0 = str(uuid.uuid4())
+    store.start_run(OWNER, rid0, "https://s0.example", "x")
+    # Finish the first run so it has a result in the list
+    store.finish_run(OWNER, rid0, {"mismatch": []}, None)
+    rid1 = str(uuid.uuid4())
+    store.start_run(OWNER, rid1, "https://s1.example", "x")
+    store.start_run("other.example", str(uuid.uuid4()), "https://o.example", "x")
+    body = _get(client, "/stringer/forage/runs").json()
+    assert [r["site"] for r in body["runs"]] == ["https://s1.example", "https://s0.example"]
+    assert body["used_today"] == 2 and body["limit"] == 5 and body["resets_at"]
+    # Verify no result key in any list entry, even the finished run
+    assert all("result" not in r for r in body["runs"])
+
+
+def test_run_id_path_must_be_a_uuid(client):
+    assert _get(client, "/stringer/forage/run/not-a-uuid").status_code == 400
