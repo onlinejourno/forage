@@ -61,6 +61,6 @@ def test_check_reports_ok_for_a_writable_path(db):
 def test_stored_result_is_json_not_pickle(db):
     store.save_result("https://acj.example", {"n": 1})
     con = store._connect()
-    raw = con.execute("SELECT result_json FROM results").fetchone()[0]
+    raw = con.execute("SELECT result_json FROM results WHERE status = 'done'").fetchone()[0]
     con.close()
     assert json.loads(raw) == {"n": 1}
