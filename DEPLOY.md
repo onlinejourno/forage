@@ -138,6 +138,8 @@ Set in Fly dashboard or via `fly secrets set`:
 | `AUDIT_LOG_PATH` | Already set to `/data/audit_log.db` in Dockerfile |
 | `FORAGE_DB_PATH` | Where finished analyses are stored; `fly.toml` sets `/data/forage.db` on the `forage_data` volume |
 | `FORAGE_STRINGER_KEY` | Site key the Newsroom hub signs with; unset = the hub capability refuses everyone |
+| `FORAGE_STRINGER_KEY_ID` | Optional. When set (empty included), a `stringer-v2` signature must name exactly this keyid. Unset accepts any keyid |
+| `STRINGER_REQUIRE_SIGNED_CREATED` | `1` refuses hub requests without the `stringer-v2` member, whose signed `created` stops replays. Unset while hubs still send only `stringer` |
 
 ---
 

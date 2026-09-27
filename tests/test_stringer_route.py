@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,3 +165,27 @@ def test_finished_job_is_persisted(client, monkeypatch):
     api._run_job("j1", api.AnalyseRequest(url="https://acj.example"))
     assert api.JOBS["j1"]["status"] == "done"
     assert store.latest_result("acj.example")["result"]["site"] == "https://acj.example"
+
+
+def test_a_replayed_v2_request_is_refused_and_a_fresh_one_admitted(client):
+    """`created` is signed, so a captured request goes stale."""
+    from tests.test_stringer_auth import sign_v2
+
+    url = f"https://{HOST}{PATH}"
+    base = {"host": HOST, "x-forwarded-proto": "https", "x-forwarded-host": HOST, api.SITE_HEADER: "news.example"}
+    fresh = {**base, **sign_v2("GET", url, int(time.time()), key=KEY)}
+    replay = {**base, **sign_v2("GET", url, int(time.time()) - 301, key=KEY)}
+    assert client.get(PATH, headers=fresh).status_code == 200
+    assert client.get(PATH, headers=replay).status_code == 401
+
+
+def test_the_configured_keyid_is_enforced_on_v2(client, monkeypatch):
+    from tests.test_stringer_auth import sign_v2
+
+    monkeypatch.setenv(api.STRINGER_KEY_ID_ENV, "site-key-v1")
+    url = f"https://{HOST}{PATH}"
+    base = {"host": HOST, "x-forwarded-proto": "https", "x-forwarded-host": HOST, api.SITE_HEADER: "news.example"}
+    ours = {**base, **sign_v2("GET", url, int(time.time()), key=KEY)}
+    theirs = {**base, **sign_v2("GET", url, int(time.time()), key=KEY, keyid="other")}
+    assert client.get(PATH, headers=ours).status_code == 200
+    assert client.get(PATH, headers=theirs).status_code == 401

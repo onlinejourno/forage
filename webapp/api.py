@@ -367,6 +367,8 @@ def job_status(job_id: str):
 # ---------------------------------------------------------------------------
 
 STRINGER_KEY_ENV = "FORAGE_STRINGER_KEY"
+# When set (empty included), a v2 signature must name exactly this keyid.
+STRINGER_KEY_ID_ENV = "FORAGE_STRINGER_KEY_ID"
 # Set by the hub from its own configuration for the tenant it verified. Forage
 # never learns which newsroom asked; it is told which site to report on.
 SITE_HEADER = "x-forage-site"
@@ -414,7 +416,14 @@ def stringer_mismatch(request: Request):
         request.url.netloc,
         request.url.path + (f"?{request.url.query}" if request.url.query else ""),
     )
-    if not verify_stringer_signature("GET", target, b"", request.headers, os.environ.get(STRINGER_KEY_ENV, "")):
+    if not verify_stringer_signature(
+        "GET",
+        target,
+        b"",
+        request.headers,
+        os.environ.get(STRINGER_KEY_ENV, ""),
+        keyid=os.environ.get(STRINGER_KEY_ID_ENV),
+    ):
         raise HTTPException(status_code=401, detail="unauthorized")
 
     site = (request.headers.get(SITE_HEADER) or "").strip()
