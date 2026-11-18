@@ -11,10 +11,12 @@ redirect hop.
 
 from __future__ import annotations
 
+import contextvars
 import ipaddress
 import json
 import os
 import socket
+from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -65,6 +67,23 @@ def validate_public_url(raw: str) -> str:
 
 _HOST_HEADERS_ENV = "FETCH_HOST_HEADERS"
 
+# The headers can be a secret that lets Forage past a site's block. The public
+# analyse route runs any site for anyone and returns the result, so it must
+# never send them: only an operator run (webapp.operator_run) opens the door.
+# A context variable, not a global: a pool thread starts with the default
+# context, so a public job can never inherit an operator's open door.
+_door_open: contextvars.ContextVar[bool] = contextvars.ContextVar("forage_door_open", default=False)
+
+
+@contextmanager
+def operator_door():
+    """Send FETCH_HOST_HEADERS for the duration of an operator run."""
+    token = _door_open.set(True)
+    try:
+        yield
+    finally:
+        _door_open.reset(token)
+
 
 def host_headers(url: str) -> dict:
     """Extra request headers for ``url``'s host, from ``FETCH_HOST_HEADERS``.
@@ -73,8 +92,10 @@ def host_headers(url: str) -> dict:
     Forage a service token. The setting is JSON mapping a host to the headers
     it needs; the host and its subdomains match. Read on every call, never at
     import. A broken setting raises: silently sending nothing would look
-    exactly like the site blocking us.
+    exactly like the site blocking us. Empty unless inside operator_door().
     """
+    if not _door_open.get():
+        return {}
     raw = os.environ.get(_HOST_HEADERS_ENV, "").strip()
     if not raw:
         return {}

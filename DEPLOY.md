@@ -140,6 +140,22 @@ Set in Fly dashboard or via `fly secrets set`:
 | `FORAGE_STRINGER_KEY` | Site key the Newsroom hub signs with; unset = the hub capability refuses everyone |
 | `FORAGE_STRINGER_KEY_ID` | Optional. When set (empty included), a `stringer-v2` signature must name exactly this keyid. Unset accepts any keyid |
 | `STRINGER_REQUIRE_SIGNED_CREATED` | `1` refuses hub requests without the `stringer-v2` member, whose signed `created` stops replays. Unset while hubs still send only `stringer` |
+| `FETCH_HOST_HEADERS` | JSON mapping a host to extra request headers, e.g. a secret that lets Forage past a site's block. Sent **only** by an operator run (below), never by the public analyse route, and only to that host and its subdomains, re-checked on every redirect |
+
+### Operator run (a site behind a door)
+
+For a site that blocks crawlers but lets Forage in on a `FETCH_HOST_HEADERS`
+secret, run it on the Forage machine, where the secret lives:
+
+```bash
+curl -s https://prowl-api.fly.dev/api/health   # wakes the machine; it sleeps when idle
+fly ssh console -a prowl-api -C "sh -c 'cd /app && python -m webapp.operator_run https://<SITE>'"
+```
+
+It prints how many sections it found and stores the run as that site's
+latest, which the hub's signed `mismatch` endpoint reads. Exit 1 or 2 prints
+why. The machine auto-stops when no HTTP traffic arrives and an SSH session
+does not count, so keep `/api/health` polled while a long run works. Without the secret set, the site's block answers and the counts are 0.
 
 ---
 

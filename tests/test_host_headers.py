@@ -2,7 +2,9 @@
 
 A site can sit behind a login (for example Cloudflare Access) and give Forage
 a service token. The token goes only to that site's host, worked out again on
-every redirect hop, so a redirect elsewhere never carries it.
+every redirect hop, so a redirect elsewhere never carries it. The door is
+open only inside an operator run (see test_operator_door.py), so every test
+here holds it open.
 """
 import json
 
@@ -12,6 +14,12 @@ import requests
 from webapp import ssrf
 
 TOKEN = {"CF-Access-Client-Id": "id-1", "CF-Access-Client-Secret": "s-1"}
+
+
+@pytest.fixture(autouse=True)
+def _door_open():
+    with ssrf.operator_door():
+        yield
 
 
 def _env(monkeypatch, table):
