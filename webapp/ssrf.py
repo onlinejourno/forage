@@ -11,8 +11,12 @@ redirect hop.
 
 from __future__ import annotations
 
+import contextvars
 import ipaddress
+import json
+import os
 import socket
+from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -61,6 +65,58 @@ def validate_public_url(raw: str) -> str:
     return raw
 
 
+_HOST_HEADERS_ENV = "FETCH_HOST_HEADERS"
+
+# The headers can be a secret that lets Forage past a site's block. The public
+# analyse route runs any site for anyone and returns the result, so it must
+# never send them: only an operator run (webapp.operator_run) opens the door.
+# A context variable, not a global: a pool thread starts with the default
+# context, so a public job can never inherit an operator's open door.
+_door_open: contextvars.ContextVar[bool] = contextvars.ContextVar("forage_door_open", default=False)
+
+
+@contextmanager
+def operator_door():
+    """Send FETCH_HOST_HEADERS for the duration of an operator run."""
+    token = _door_open.set(True)
+    try:
+        yield
+    finally:
+        _door_open.reset(token)
+
+
+def host_headers(url: str) -> dict:
+    """Extra request headers for ``url``'s host, from ``FETCH_HOST_HEADERS``.
+
+    A site can sit behind a login (for example Cloudflare Access) and give
+    Forage a service token. The setting is JSON mapping a host to the headers
+    it needs; the host and its subdomains match. Read on every call, never at
+    import. A broken setting raises: silently sending nothing would look
+    exactly like the site blocking us. Empty unless inside operator_door().
+    """
+    if not _door_open.get():
+        return {}
+    raw = os.environ.get(_HOST_HEADERS_ENV, "").strip()
+    if not raw:
+        return {}
+    try:
+        table = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"{_HOST_HEADERS_ENV} is not valid JSON") from exc
+    if not isinstance(table, dict):
+        raise ValueError(f"{_HOST_HEADERS_ENV} must map hosts to headers")  # noqa: TRY004 - one error type for every bad setting
+    host = (urlparse(url).hostname or "").lower()
+    for key, extra in table.items():
+        if not isinstance(extra, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in extra.items()
+        ):
+            raise ValueError(f"{_HOST_HEADERS_ENV}: headers for {key!r} must be strings")
+        key = str(key).lower()
+        if host == key or host.endswith("." + key):
+            return dict(extra)
+    return {}
+
+
 def safe_get(url: str, *, max_redirects: int = 5, **kwargs) -> requests.Response:
     """``requests.get`` with SSRF validation on the initial URL and every hop.
 
@@ -71,7 +127,9 @@ def safe_get(url: str, *, max_redirects: int = 5, **kwargs) -> requests.Response
     current = url
     for _ in range(max_redirects + 1):
         validate_public_url(current)
-        resp = requests.get(current, **kwargs)
+        # Per hop: a host's token never follows a redirect to another host.
+        hop_kwargs = {**kwargs, "headers": {**(kwargs.get("headers") or {}), **host_headers(current)}}
+        resp = requests.get(current, **hop_kwargs)
         if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
             location = resp.headers.get("Location")
             if not location:
