@@ -180,20 +180,27 @@ def spider_depth(site_url: str, max_pages: int = 80) -> pd.DataFrame:
     Returns DataFrame with url, depth, section columns.
     """
     base = site_url.rstrip("/")
+    # Keyed without a trailing slash, so "/" and "" (or "/a/" and "/a") are one page.
     visited = {base: 0}
     queue = [(base, 0)]
     rows = []
+    fetched = 0
 
-    while queue and len(visited) < max_pages:
+    # The limit counts pages FETCHED. It used to count URLs queued, so a
+    # homepage linking to more than max_pages URLs filled the quota and the
+    # crawl stopped at the homepage (observed 2026-11-18: 91 links, 1 page).
+    while queue and fetched < max_pages:
         url, depth = queue.pop(0)
+        fetched += 1
         try:
             r = safe_get(url, headers=HEADERS, timeout=TIMEOUT)
             if "text/html" not in r.headers.get("content-type", ""):
                 continue
             links = _extract_links(r.text, base)
             for link in links:
-                if link not in visited and len(visited) < max_pages:
-                    visited[link] = depth + 1
+                key = link.rstrip("/")
+                if key not in visited:
+                    visited[key] = depth + 1
                     queue.append((link, depth + 1))
             parts = urlparse(url).path.strip("/").split("/")
             section = parts[0] if parts and parts[0] else "(root)"
