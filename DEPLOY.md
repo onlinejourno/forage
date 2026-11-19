@@ -157,6 +157,13 @@ latest, which the hub's signed `mismatch` endpoint reads. Exit 1 or 2 prints
 why. The machine auto-stops when no HTTP traffic arrives and an SSH session
 does not count, so keep `/api/health` polled while a long run works. Without the secret set, the site's block answers and the counts are 0.
 
+The hub can start the same run with a signed
+`POST /stringer/forage/operator-run` (`{"url": "..."}`) and follow it at
+`GET /stringer/forage/operator-run/<id>` (polling keeps the machine awake). Both
+need a `stringer-v2` signature under `FORAGE_STRINGER_KEY`; the host must be one
+`FETCH_HOST_HEADERS` names; one run goes at a time, and a new one waits
+`OPERATOR_RUN_COOLDOWN_MINUTES` (default 10) after the last start.
+
 ---
 
 ## Updating a tool
