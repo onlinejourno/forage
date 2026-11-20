@@ -1,0 +1,21 @@
+name: tests
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+permissions: { contents: read }
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          # Matches the production image (Dockerfile: python:3.11-slim).
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r webapp/requirements-api.txt
+          pip install pytest httpx
+      - name: Run tests
+        run: python -m pytest -q
