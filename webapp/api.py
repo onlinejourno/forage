@@ -9,8 +9,11 @@ GET /api/analyse/{job_id} until status == "done". State is in-memory (single
 machine) — no database, matching the no-login, public-data design.
 """
 
+import json
 import logging
+import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -27,7 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from webapp import fetchers, store
-from webapp.ssrf import UnsafeURLError, validate_public_url
+from webapp.ssrf import UnsafeURLError, host_headers, operator_door, validate_public_url
 from webapp.stringer_auth import target_uri_for, verify_stringer_signature
 
 log = logging.getLogger("forage")
@@ -443,3 +446,130 @@ def stringer_mismatch(request: Request):
         # is not a fault, it is an instruction -- go run Forage on this site.
         return {"state": "no_analysis", "site": site, "mismatch": []}
     return _mismatch_summary(row)
+
+
+# ---------------------------------------------------------------------------
+# Operator run from the hub — signed, starts work
+# ---------------------------------------------------------------------------
+#
+# Lets the hub start what `python -m webapp.operator_run` does, so an
+# admin presses a button instead of opening a shell. The run sends the site's
+# FETCH_HOST_HEADERS, so every guard is about who may open that door:
+#
+#   - The hub's signature with a signed `created` (stringer-v2), so a captured
+#     request cannot be replayed. The old member alone is refused here.
+#   - The host must be one FETCH_HOST_HEADERS names. The request picks the URL
+#     but never widens the table, even with the hub's key in hand.
+#   - One run at a time, and none within the cooldown of the last start.
+#
+# Nothing the run reads comes back here: it is stored like any operator run and
+# the hub reads it through the signed `mismatch` endpoint. Runs live in memory:
+# a restart ends any run in flight, and the cooldown restarts with it.
+
+OPERATOR_COOLDOWN_ENV = "OPERATOR_RUN_COOLDOWN_MINUTES"
+_DEFAULT_COOLDOWN_MINUTES = 10
+_SECONDS_PER_MINUTE = 60
+
+_operator_runs: dict[str, dict] = {}
+_operator_state: dict = {"last_start": None, "in_flight": False}
+_operator_lock = threading.Lock()
+_operator_clock = time.time
+
+
+def _operator_cooldown_seconds() -> float:
+    raw = os.environ.get(OPERATOR_COOLDOWN_ENV, "").strip()
+    minutes = float(raw) if raw else _DEFAULT_COOLDOWN_MINUTES
+    if minutes < 0:
+        raise ValueError(f"{OPERATOR_COOLDOWN_ENV} must be a number of minutes")
+    return minutes * _SECONDS_PER_MINUTE
+
+
+def _operator_run_site(url: str) -> str:
+    """What `python -m webapp.operator_run <url>` does; its last line, or raise."""
+    from webapp import operator_run  # imports this module
+
+    lines: list[str] = []
+    code = operator_run.main([url], say=lines.append)
+    last = lines[-1] if lines else f"exit {code}"
+    if code != 0:
+        raise RuntimeError(last)
+    return last
+
+
+def _signed_v2(request: Request, method: str, body: bytes) -> bool:
+    if not re.search(r"(?:^|,\s*)stringer-v2=", request.headers.get("signature-input", "")):
+        return False
+    target = target_uri_for(
+        request.headers,
+        request.url.scheme,
+        request.url.netloc,
+        request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+    )
+    return verify_stringer_signature(
+        method,
+        target,
+        body,
+        request.headers,
+        os.environ.get(STRINGER_KEY_ENV, ""),
+        keyid=os.environ.get(STRINGER_KEY_ID_ENV),
+    )
+
+
+def _operator_finish(entry: dict, url: str) -> None:
+    try:
+        entry["message"] = _operator_run_site(url)
+        entry["state"] = "stored"
+    except Exception as exc:  # noqa: BLE001 - every failure is reported on the status
+        entry["message"] = str(exc)
+        entry["state"] = "failed"
+        log.error("operator run failed: %s", exc)
+    finally:
+        entry["finished_at"] = _operator_clock()
+        with _operator_lock:
+            _operator_state["in_flight"] = False
+
+
+@app.post("/stringer/forage/operator-run", status_code=202)
+@limiter.limit("10/minute")
+async def stringer_operator_run(request: Request):
+    body = await request.body()
+    if not _signed_v2(request, "POST", body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    try:
+        url = str(json.loads(body or b"{}").get("url") or "").strip()
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="expected {\"url\": \"...\"}")
+    with operator_door():
+        if not host_headers(url):
+            raise HTTPException(status_code=400, detail="Forage has no key for that site.")
+
+    with _operator_lock:
+        if _operator_state["in_flight"]:
+            raise HTTPException(status_code=409, detail="A run is already going. Wait for it to finish.")
+        last = _operator_state["last_start"]
+        wait = 0 if last is None else last + _operator_cooldown_seconds() - _operator_clock()
+        if wait > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Checked recently. Try again in {math.ceil(wait / _SECONDS_PER_MINUTE)} minutes.",
+                headers={"Retry-After": str(math.ceil(wait))},
+            )
+        run_id = str(uuid.uuid4())
+        entry = {"state": "running", "started_at": _operator_clock(), "finished_at": None, "message": None}
+        _operator_runs[run_id] = entry
+        _operator_state.update(last_start=_operator_clock(), in_flight=True)
+    # A plain thread: operator_run opens the door inside it, and a public job's
+    # pool thread never inherits it.
+    threading.Thread(target=_operator_finish, args=(entry, url), daemon=True).start()
+    return {"id": run_id}
+
+
+@app.get("/stringer/forage/operator-run/{run_id}")
+@limiter.limit("60/minute")
+def stringer_operator_run_status(run_id: str, request: Request):
+    if not _signed_v2(request, "GET", b""):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    entry = _operator_runs.get(run_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No such run.")
+    return entry

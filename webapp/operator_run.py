@@ -17,9 +17,11 @@ from webapp import api, store
 from webapp.ssrf import UnsafeURLError, operator_door, validate_public_url
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], say=None) -> int:
+    err = say or (lambda msg: print(msg, file=sys.stderr))
+    out = say or print
     if len(argv) != 1:
-        print("usage: python -m webapp.operator_run <site-url>", file=sys.stderr)
+        err("usage: python -m webapp.operator_run <site-url>")
         return 2
     url = argv[0].strip()
     if not url.startswith(("http://", "https://")):
@@ -27,19 +29,19 @@ def main(argv: list[str]) -> int:
     try:
         validate_public_url(url)
     except UnsafeURLError as exc:
-        print(f"refused: {exc}", file=sys.stderr)
+        err(f"refused: {exc}")
         return 2
 
     req = api.AnalyseRequest(url=url, competitors=[], priority=[])
     try:
         with operator_door():
-            result = api._build_result(req, lambda step: print(step, file=sys.stderr))
+            result = api._build_result(req, err)
         store.save_result(url, result)
     except Exception as exc:  # noqa: BLE001 - an operator command reports every failure
-        print(f"failed: {exc}", file=sys.stderr)
+        err(f"failed: {exc}")
         return 1
 
-    print(
+    out(
         f"stored {url}: {len(result['sitemap_summary'])} sitemap sections, "
         f"{len(result['depth_summary'])} crawled sections, "
         f"{len(result['mismatch'])} mismatch rows"
